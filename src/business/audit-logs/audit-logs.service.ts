@@ -2,13 +2,35 @@
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuditLog } from '../../models/audit-log.entity';
+import { paginate, getSkip } from '../../common/utils/pagination.util';
+
+export interface AuditLogFilter {
+  page?: number;
+  limit?: number;
+  entityName?: string;
+  entityId?: number;
+  userId?: number;
+  action?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
 
 @Injectable()
 export class AuditLogsService {
   constructor(@InjectRepository(AuditLog) private repo: Repository<AuditLog>) {}
 
-  findAll(limit = 100) {
-    return this.repo.find({ order: { createdAt: 'DESC' }, take: limit });
+  /** Paginated, filterable audit log query */
+  async findAll(filter: AuditLogFilter = {}) {
+    const { page = 1, limit = 50, entityName, entityId, userId, action, dateFrom, dateTo } = filter;
+    const qb = this.repo.createQueryBuilder('a');
+    if (entityName) qb.andWhere('a.entityName = :entityName', { entityName });
+    if (entityId) qb.andWhere('a.entityId = :entityId', { entityId });
+    if (userId) qb.andWhere('a.userId = :userId', { userId });
+    if (action) qb.andWhere('a.action = :action', { action });
+    if (dateFrom) qb.andWhere('a.createdAt >= :dateFrom', { dateFrom });
+    if (dateTo) qb.andWhere('a.createdAt <= :dateTo', { dateTo });
+    qb.orderBy('a.createdAt', 'DESC').skip(getSkip(page, limit)).take(limit);
+    return paginate(await qb.getManyAndCount(), page, limit);
   }
 
   findByEntity(entityName: string, entityId: number) {

@@ -1,6 +1,6 @@
 ﻿import { Entity, Column } from 'typeorm';
 import { BaseEntity } from './base.entity';
-import { AccountingStatus } from './revenue-entry.entity';
+import { AccountingStatus, PaymentStatus } from './revenue-entry.entity';
 
 @Entity('cost_entries')
 export class CostEntry extends BaseEntity {
@@ -32,11 +32,43 @@ export class CostEntry extends BaseEntity {
   })
   status: AccountingStatus;
 
+  // ─── Payment tracking ───────────────────────────────────────────────────
+  @Column({
+    name: 'payment_status',
+    type: 'enum',
+    enum: PaymentStatus,
+    default: PaymentStatus.UNPAID,
+  })
+  paymentStatus: PaymentStatus;
+
+  @Column({ name: 'ref_number', length: 100, nullable: true })
+  refNumber: string;
+
+  @Column({ name: 'invoice_number', length: 100, nullable: true })
+  invoiceNumber: string;
+
+  @Column({ name: 'doc_date', type: 'date', nullable: true })
+  docDate: Date;
+
+  @Column({ name: 'due_date', type: 'date', nullable: true })
+  dueDate: Date;
+
+  // ─── Posting info ───────────────────────────────────────────────────────
   @Column({ name: 'posted_at', type: 'datetime', nullable: true })
   postedAt: Date;
 
   @Column({ name: 'posted_by', nullable: true })
   postedBy: number;
+
+  // ─── Void / Reversal ────────────────────────────────────────────────────
+  @Column({ name: 'reversal_of', nullable: true })
+  reversalOf: number;
+
+  @Column({ name: 'voided_at', type: 'datetime', nullable: true })
+  voidedAt: Date;
+
+  @Column({ name: 'voided_by', nullable: true })
+  voidedBy: number;
 
   @Column({ type: 'text', nullable: true })
   notes: string;

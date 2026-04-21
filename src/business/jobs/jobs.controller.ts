@@ -1,6 +1,6 @@
-﻿import { Controller, Get, Post, Patch, Body, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
+﻿import { Controller, Get, Post, Patch, Delete, Body, Param, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
 import { JobsService } from './jobs.service';
-import { CreateJobDto, UpdateJobDto } from './dto/job.dto';
+import { CreateJobDto, UpdateJobDto, JobFilterDto, CreateMilestoneDto, UpdateMilestoneDto } from './dto/job.dto';
 import { JobStatus } from '../../models/job.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -19,7 +19,9 @@ export class JobsController {
   }
 
   @Get()
-  findAll() { return this.svc.findAll(); }
+  findAll(@Query() filter: JobFilterDto) {
+    return this.svc.findAll(filter);
+  }
 
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) { return this.svc.findOne(id); }
@@ -46,5 +48,42 @@ export class JobsController {
   @Patch(':id/start')
   start(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
     return this.svc.updateStatus(id, JobStatus.IN_PROGRESS, user.id);
+  }
+
+  // ─── Milestones ──────────────────────────────────────────────────────────
+
+  @Get(':id/milestones')
+  getMilestones(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.getMilestones(id);
+  }
+
+  @RequirePermission('job:edit')
+  @Post(':id/milestones')
+  addMilestone(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateMilestoneDto,
+    @CurrentUser() user: { id: number },
+  ) {
+    return this.svc.addMilestone(id, dto, user.id);
+  }
+
+  @RequirePermission('job:edit')
+  @Patch(':id/milestones/:milestoneId')
+  updateMilestone(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('milestoneId', ParseIntPipe) milestoneId: number,
+    @Body() dto: UpdateMilestoneDto,
+    @CurrentUser() user: { id: number },
+  ) {
+    return this.svc.updateMilestone(id, milestoneId, dto, user.id);
+  }
+
+  @RequirePermission('job:edit')
+  @Delete(':id/milestones/:milestoneId')
+  deleteMilestone(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('milestoneId', ParseIntPipe) milestoneId: number,
+  ) {
+    return this.svc.deleteMilestone(id, milestoneId);
   }
 }

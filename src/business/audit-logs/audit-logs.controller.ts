@@ -9,10 +9,31 @@ import { RequirePermission } from '../auth/decorators/require-permission.decorat
 export class AuditLogsController {
   constructor(private svc: AuditLogsService) {}
 
+  /**
+   * GET /audit-logs?page=1&limit=50&entityName=Job&userId=3&action=CREATE&dateFrom=2026-01-01&dateTo=2026-12-31
+   */
   @RequirePermission('auditlog:view')
   @Get()
-  findAll(@Query('limit') limit?: number) {
-    return this.svc.findAll(limit ? Number(limit) : 100);
+  findAll(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('entityName') entityName?: string,
+    @Query('entityId') entityId?: string,
+    @Query('userId') userId?: string,
+    @Query('action') action?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    return this.svc.findAll({
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 50,
+      entityName,
+      entityId: entityId ? Number(entityId) : undefined,
+      userId: userId ? Number(userId) : undefined,
+      action,
+      dateFrom,
+      dateTo,
+    });
   }
 
   @RequirePermission('auditlog:view')

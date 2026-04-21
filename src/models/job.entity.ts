@@ -57,11 +57,47 @@ export class Job extends BaseEntity {
   @Column({ name: 'assigned_user_id', nullable: true })
   assignedUserId: number;
 
+  // ─── Shipment / Transport detail fields ─────────────────────────────────
+  @Column({ name: 'booking_ref', length: 100, nullable: true })
+  bookingRef: string;
+
+  @Column({ name: 'vessel_name', length: 200, nullable: true })
+  vesselName: string;
+
+  @Column({ name: 'voyage_no', length: 50, nullable: true })
+  voyageNo: string;
+
+  @Column({ length: 100, nullable: true })
+  hbl: string;
+
+  @Column({ length: 100, nullable: true })
+  mbl: string;
+
+  @Column({ name: 'container_no', length: 100, nullable: true })
+  containerNo: string;
+
+  @Column({ name: 'seal_no', length: 100, nullable: true })
+  sealNo: string;
+
   @Column({ name: 'etd', type: 'date', nullable: true })
   etd: Date;
 
   @Column({ name: 'eta', type: 'date', nullable: true })
   eta: Date;
+
+  /** Actual Time of Departure */
+  @Column({ name: 'atd', type: 'date', nullable: true })
+  atd: Date;
+
+  /** Actual Time of Arrival */
+  @Column({ name: 'ata', type: 'date', nullable: true })
+  ata: Date;
+
+  @Column({ name: 'pol', length: 100, nullable: true })
+  pol: string; // Port of Loading
+
+  @Column({ name: 'pod', length: 100, nullable: true })
+  pod: string; // Port of Discharge
 
   @Column({ length: 255, nullable: true })
   origin: string;
@@ -69,9 +105,16 @@ export class Job extends BaseEntity {
   @Column({ length: 255, nullable: true })
   destination: string;
 
+  // ─── Notes ──────────────────────────────────────────────────────────────
+  /** Public notes (visible to operations) */
   @Column({ type: 'text', nullable: true })
   notes: string;
 
+  /** Internal notes (admin / ops only) */
+  @Column({ name: 'internal_notes', type: 'text', nullable: true })
+  internalNotes: string;
+
+  // ─── Closure ────────────────────────────────────────────────────────────
   @Column({ name: 'closed_at', type: 'datetime', nullable: true })
   closedAt: Date;
 

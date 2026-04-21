@@ -1,4 +1,7 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+const fs = require('fs');
+const path = require('path');
+
+const content = `import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Job, JobStatus } from '../../models/job.entity';
@@ -24,16 +27,16 @@ export class JobsService {
   private async validateRefs(dto: { partnerId?: number; branchId?: number; assignedUserId?: number }) {
     if (dto.partnerId) {
       const p = await this.partnerRepo.findOne({ where: { id: dto.partnerId } });
-      if (!p) throw new BadRequestException(`Partner #${dto.partnerId} not found`);
+      if (!p) throw new BadRequestException(\`Partner #\${dto.partnerId} not found\`);
     }
     if (dto.branchId) {
       const b = await this.branchRepo.findOne({ where: { id: dto.branchId } });
-      if (!b) throw new BadRequestException(`Branch #${dto.branchId} not found`);
+      if (!b) throw new BadRequestException(\`Branch #\${dto.branchId} not found\`);
     }
     if (dto.assignedUserId) {
       const u = await this.userRepo.findOne({ where: { id: dto.assignedUserId } });
-      if (!u) throw new BadRequestException(`User #${dto.assignedUserId} not found`);
-      if (!u.isActive) throw new BadRequestException(`User #${dto.assignedUserId} is inactive`);
+      if (!u) throw new BadRequestException(\`User #\${dto.assignedUserId} not found\`);
+      if (!u.isActive) throw new BadRequestException(\`User #\${dto.assignedUserId} is inactive\`);
     }
   }
 
@@ -58,7 +61,7 @@ export class JobsService {
     if (keyword) {
       qb.andWhere(
         '(j.jobCode LIKE :kw OR j.origin LIKE :kw OR j.destination LIKE :kw OR j.bookingRef LIKE :kw OR j.vesselName LIKE :kw OR j.hbl LIKE :kw OR j.mbl LIKE :kw)',
-        { kw: `%${keyword}%` },
+        { kw: \`%\${keyword}%\` },
       );
     }
     if (status) qb.andWhere('j.status = :status', { status });
@@ -71,7 +74,7 @@ export class JobsService {
     if (dateTo) qb.andWhere('j.createdAt <= :dateTo', { dateTo });
     const allowedSort = ['createdAt', 'etd', 'eta', 'jobCode', 'status'];
     const col = allowedSort.includes(sortBy) ? sortBy : 'createdAt';
-    qb.orderBy(`j.${col}`, sortOrder).skip(getSkip(page, limit)).take(limit);
+    qb.orderBy(\`j.\${col}\`, sortOrder).skip(getSkip(page, limit)).take(limit);
     return paginate(await qb.getManyAndCount(), page, limit);
   }
 
@@ -144,3 +147,7 @@ export class JobsService {
     return { message: 'Milestone deleted' };
   }
 }
+`;
+
+fs.writeFileSync(path.join(__dirname, '../src/business/jobs/jobs.service.ts'), content, 'utf8');
+console.log('jobs.service.ts written', content.length);
