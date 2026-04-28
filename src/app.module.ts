@@ -12,10 +12,14 @@ import { AuditLogsModule } from './business/audit-logs/audit-logs.module';
 import { HealthModule } from './business/health/health.module';
 import { AttachmentsModule } from './business/attachments/attachments.module';
 import { ReportsModule } from './business/reports/reports.module';
+import { getEnvFilePath } from './config/env-file-path';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: getEnvFilePath(),
+    }),
     DatabaseModule,
     AuthModule,
     UsersModule,
