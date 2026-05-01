@@ -49,7 +49,17 @@ async function bootstrap() {
     .setTitle('HR Duong Minh ERP API')
     .setDescription('Swagger documentation for the HR Duong Minh ERP backend')
     .setVersion('1.0')
-    .addBearerAuth()
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'Authorization',
+        in: 'header',
+      },
+      'bearer',
+    )
+    .addSecurityRequirements('bearer')
     .build();
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
 
