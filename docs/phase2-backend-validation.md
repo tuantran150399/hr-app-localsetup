@@ -1,477 +1,358 @@
 # Phase 2 Backend Validation
 
-## 1. Overview
+Last updated: 2026-05-02
 
-This document validates Phase 2 backend completeness for the ERP Logistics system.
+## 1. Current Status
 
-The system is a Mini ERP for logistics and forwarding operations. It covers job management, accounting and finance, audit tracking, reporting, and document attachments.
+The Phase 2 backend API upgrades are implemented for the ERP Logistics testing flow.
 
-Tech stack:
+Stack:
 
-- Backend: NestJS
-- Database access: TypeORM
-- Frontend: Next.js
-- API base path: `/api/v1`
+- Backend: NestJS monolith
+- Database: MariaDB
+- ORM: TypeORM
+- Frontend: Next.js static export
+- API prefix: `/api/v1`
+- Swagger:
+  - `/docs`
+  - `/api/v1/docs`
+- Health check:
+  - `/api/v1/health`
 
-Phase 2 scope reviewed:
+Production test account seeded by `scripts/seed-api-test-data.js`:
 
-- Job Management
-- Accounting: revenue, cost, profit, posting, void/reversal
-- Audit Log
-- Search, filter, and pagination
-- Reporting
-- Attachments and documents
+```json
+{
+  "username": "api.tester",
+  "password": "ApiTest@123"
+}
+```
 
-## 2. API Inventory
+Login request body for Swagger:
 
-### 2.1 Frontend Requested APIs
+```json
+{
+  "username": "api.tester",
+  "password": "ApiTest@123"
+}
+```
 
-- `POST /auth/login`
-- `GET /auth/me`
-- `POST /auth/refresh`
-- `GET /jobs`
-- `GET /jobs/:id`
-- `POST /jobs`
-- `PUT /jobs/:id`
-- `DELETE /jobs/:id`
-- `GET /partners`
-- `GET /partners/:id`
-- `POST /partners`
-- `PUT /partners/:id`
-- `DELETE /partners/:id`
-- `GET /accounting/revenue`
-- `GET /accounting/revenue/job/:jobId`
-- `GET /accounting/cost`
-- `GET /accounting/cost/job/:jobId`
-- `GET /accounting/profit/job/:jobId`
-- `GET /dashboard/stats`
-- `GET /accounting/revenue/chart`
-- `GET /accounting/cost/chart`
+Use the returned `accessToken` in Swagger `Authorize` as a Bearer JWT.
 
-### 2.2 Backend Implemented APIs
+## 2. Frontend Integration Status
 
-- `POST /auth/login`
-- `GET /auth/me`
-- `POST /users`
-- `GET /users`
-- `GET /users/me`
-- `GET /users/:id`
-- `PATCH /users/:id`
-- `PATCH /users/me/password`
-- `DELETE /users/:id`
-- `POST /roles`
-- `GET /roles`
-- `GET /roles/permissions`
-- `GET /roles/:id`
-- `PATCH /roles/:id`
-- `POST /branches`
-- `GET /branches`
-- `GET /branches/:id`
-- `PATCH /branches/:id`
-- `POST /partners`
-- `GET /partners`
-- `GET /partners/:id`
-- `PATCH /partners/:id`
-- `POST /jobs`
-- `GET /jobs`
-- `GET /jobs/:id`
-- `PATCH /jobs/:id`
-- `PATCH /jobs/:id/start`
-- `PATCH /jobs/:id/close`
-- `PATCH /jobs/:id/cancel`
-- `GET /jobs/:id/milestones`
-- `POST /jobs/:id/milestones`
-- `PATCH /jobs/:id/milestones/:milestoneId`
-- `DELETE /jobs/:id/milestones/:milestoneId`
-- `POST /accounting/revenue`
-- `GET /accounting/revenue`
-- `GET /accounting/revenue/job/:jobId`
-- `PATCH /accounting/revenue/:id`
-- `PATCH /accounting/revenue/:id/post`
-- `POST /accounting/revenue/:id/void`
-- `PATCH /accounting/revenue/:id/payment-status`
-- `DELETE /accounting/revenue/:id`
-- `POST /accounting/cost`
-- `GET /accounting/cost`
-- `GET /accounting/cost/job/:jobId`
-- `PATCH /accounting/cost/:id`
-- `PATCH /accounting/cost/:id/post`
-- `POST /accounting/cost/:id/void`
-- `PATCH /accounting/cost/:id/payment-status`
-- `DELETE /accounting/cost/:id`
-- `POST /accounting/post-all/job/:jobId`
-- `GET /accounting/profit/job/:jobId`
-- `GET /accounting/periods`
-- `POST /accounting/periods/lock`
-- `POST /accounting/periods/unlock`
-- `POST /attachments/upload`
-- `GET /attachments`
-- `GET /attachments/:id`
-- `GET /attachments/:id/download`
-- `DELETE /attachments/:id`
-- `GET /reports/profit/job/:jobId`
-- `GET /reports/branch-summary`
-- `GET /reports/customer-summary`
-- `GET /reports/job-status-summary`
-- `GET /reports/receivables`
-- `GET /reports/payables`
-- `GET /reports/overdue-receivables`
-- `GET /reports/overdue-payables`
-- `GET /audit-logs`
-- `GET /audit-logs/:entity/:id`
-- `GET /health`
-- `GET /health/db`
-- `GET /health/live`
+The frontend hardcoded/mock data was removed from the main runtime services.
 
-## 3. API Gap Analysis
+Frontend project path:
 
-### 3.1 Missing APIs (CRITICAL)
+```text
+D:\CODE\hr-duongminh\front end\hr-duongminh-app-fe
+```
 
-- `POST /auth/refresh`
-  - Frontend token refresh interceptor calls this endpoint. Backend does not implement refresh tokens.
-- `DELETE /jobs/:id`
-  - Frontend RTK Query slice defines job deletion. Backend has no job delete/archive endpoint.
-- `DELETE /partners/:id`
-  - Frontend RTK Query slice defines partner deletion. Backend has no partner delete/archive endpoint.
-- `GET /dashboard/stats`
-  - Frontend dashboard API slice references this endpoint. Backend does not implement a dashboard controller.
-- `GET /accounting/revenue/chart`
-  - Frontend dashboard API slice references this endpoint. Backend does not implement chart endpoints.
-- `GET /accounting/cost/chart`
-  - Frontend dashboard API slice references this endpoint. Backend does not implement chart endpoints.
+Frontend service changes:
 
-### 3.2 Mismatched APIs
+- `services/authService.js`
+  - Calls `POST /auth/login`
+  - Calls `GET /auth/me`
+  - Stores refresh token when backend returns it
+  - No longer returns demo token or mock user on login failure
+- `services/dashboardService.js`
+  - Calls `GET /dashboard/stats`
+  - No longer computes dashboard totals from mock/local arrays
+- `services/jobService.js`
+  - Calls `GET /jobs`
+  - Calls `GET /jobs/:id`
+  - Calls job accounting endpoints for detail page
+- `services/partnerService.js`
+  - Calls `GET /partners?page=1&limit=100`
+  - Builds partner map from backend response
+- `services/accountingService.js`
+  - Calls `GET /accounting/revenue?page=1&limit=50`
+  - Calls `GET /accounting/cost?page=1&limit=50`
+- `utils/apiMappers.js`
+  - Maps accounting entries to `job_no`
+- `utils/mockData.js`
+  - Removed
 
-- FE: `PUT /jobs/:id`
-- BE: `PATCH /jobs/:id`
-- Issue: HTTP method mismatch.
+Frontend deployment zip:
 
-- FE: `PUT /partners/:id`
-- BE: `PATCH /partners/:id`
-- Issue: HTTP method mismatch.
+```text
+D:\CODE\hr-duongminh\front end\hr-duongminh-app-fe\erp-logistics-static.zip
+```
 
-- FE: `GET /partners` with pagination params `{ page, limit }`
-- BE: `GET /partners` with optional `type` only
-- Issue: query and response mismatch. Backend returns an array, not paginated `{ data, meta }`.
+Important build note:
 
-### 3.3 Unused Backend APIs
+Next.js static export bakes `NEXT_PUBLIC_*` variables into the JS bundle. Because `.env.local` can override production values locally, build production zips with:
 
-- `POST /users`
-- `GET /users`
-- `GET /users/me`
-- `GET /users/:id`
-- `PATCH /users/:id`
-- `PATCH /users/me/password`
-- `DELETE /users/:id`
-- `POST /roles`
-- `GET /roles`
-- `GET /roles/permissions`
-- `GET /roles/:id`
-- `PATCH /roles/:id`
-- `POST /branches`
-- `GET /branches`
-- `GET /branches/:id`
-- `PATCH /branches/:id`
-- `PATCH /jobs/:id/start`
-- `PATCH /jobs/:id/close`
-- `PATCH /jobs/:id/cancel`
-- `GET /jobs/:id/milestones`
-- `POST /jobs/:id/milestones`
-- `PATCH /jobs/:id/milestones/:milestoneId`
-- `DELETE /jobs/:id/milestones/:milestoneId`
-- `POST /accounting/revenue`
-- `PATCH /accounting/revenue/:id`
-- `PATCH /accounting/revenue/:id/post`
-- `POST /accounting/revenue/:id/void`
-- `PATCH /accounting/revenue/:id/payment-status`
-- `DELETE /accounting/revenue/:id`
-- `POST /accounting/cost`
-- `PATCH /accounting/cost/:id`
-- `PATCH /accounting/cost/:id/post`
-- `POST /accounting/cost/:id/void`
-- `PATCH /accounting/cost/:id/payment-status`
-- `DELETE /accounting/cost/:id`
-- `POST /accounting/post-all/job/:jobId`
-- `GET /accounting/periods`
-- `POST /accounting/periods/lock`
-- `POST /accounting/periods/unlock`
-- `POST /attachments/upload`
-- `GET /attachments`
-- `GET /attachments/:id`
-- `GET /attachments/:id/download`
-- `DELETE /attachments/:id`
-- `GET /reports/profit/job/:jobId`
-- `GET /reports/branch-summary`
-- `GET /reports/customer-summary`
-- `GET /reports/job-status-summary`
-- `GET /reports/receivables`
-- `GET /reports/payables`
-- `GET /reports/overdue-receivables`
-- `GET /reports/overdue-payables`
-- `GET /audit-logs`
-- `GET /audit-logs/:entity/:id`
-- `GET /health`
-- `GET /health/db`
-- `GET /health/live`
+```powershell
+$env:NEXT_PUBLIC_API_URL='https://api.hr.duongminhvn.com/api/v1'; npm run build
+Compress-Archive -Path 'out\*' -DestinationPath 'erp-logistics-static.zip' -Force
+```
 
-## 4. Phase 2 Requirement Coverage
+Verification already performed:
 
-### Feature: Job Management
+- `npm run lint` passed
+- `npm run build` passed
+- Generated `out` bundle contained `https://api.hr.duongminhvn.com/api/v1`
+- Generated `out` bundle did not contain `localhost:3003`
+- Zip contains root-level `index.html`, `_next` assets, and `web.config`
 
-- Required:
-  - Create, edit, cancel, close, and view jobs.
-  - Manage unique Job No.
-  - Support logistics fields such as shipper, consignee, agent, declaration number, customs lane, vessel/voyage, ETD/ETA, ports, cargo type, container/seal.
-  - Track job lifecycle from creation to completion.
-- Implemented:
-  - `POST /jobs`
-  - `GET /jobs`
-  - `GET /jobs/:id`
-  - `PATCH /jobs/:id`
-  - `PATCH /jobs/:id/start`
-  - `PATCH /jobs/:id/close`
-  - `PATCH /jobs/:id/cancel`
-  - `GET /jobs/:id/milestones`
-  - `POST /jobs/:id/milestones`
-  - `PATCH /jobs/:id/milestones/:milestoneId`
-  - `DELETE /jobs/:id/milestones/:milestoneId`
-- Status: PARTIAL
+## 3. Implemented API Inventory
 
-### Feature: Accounting
+All paths below are under `/api/v1`.
 
-- Required:
-  - Create and update revenue entries.
-  - Create and update cost entries.
-  - Post revenue and cost.
-  - Calculate profit by job.
-  - Prevent modification of posted or locked financial data.
-  - Support reversal or adjustment entries.
-  - Track customer payments and vendor payments.
-- Implemented:
-  - `POST /accounting/revenue`
-  - `GET /accounting/revenue`
-  - `GET /accounting/revenue/job/:jobId`
-  - `PATCH /accounting/revenue/:id`
-  - `PATCH /accounting/revenue/:id/post`
-  - `POST /accounting/revenue/:id/void`
-  - `PATCH /accounting/revenue/:id/payment-status`
-  - `DELETE /accounting/revenue/:id`
-  - `POST /accounting/cost`
-  - `GET /accounting/cost`
-  - `GET /accounting/cost/job/:jobId`
-  - `PATCH /accounting/cost/:id`
-  - `PATCH /accounting/cost/:id/post`
-  - `POST /accounting/cost/:id/void`
-  - `PATCH /accounting/cost/:id/payment-status`
-  - `DELETE /accounting/cost/:id`
-  - `POST /accounting/post-all/job/:jobId`
-  - `GET /accounting/profit/job/:jobId`
-  - `GET /accounting/periods`
-  - `POST /accounting/periods/lock`
-  - `POST /accounting/periods/unlock`
-- Status: PARTIAL
+### Auth
 
-### Feature: Audit / Tracking
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `POST` | `/auth/login` | Public | Returns access token and refresh token when available |
+| `POST` | `/auth/refresh` | Public | Refreshes access token |
+| `GET` | `/auth/me` | JWT | Current user profile |
 
-- Required:
-  - Record important user actions.
-  - Track financial data changes.
-  - Support filtering by module/entity, user, action, and date.
-- Implemented:
-  - `GET /audit-logs`
-  - `GET /audit-logs/:entity/:id`
-  - Service-level logging exists for selected job, accounting posting, voiding, payment status, and user actions.
-- Status: PARTIAL
+### Dashboard
 
-### Feature: Reporting
-
-- Required:
-  - Job profit report.
-  - Profit and loss by job, customer, and period.
-  - Revenue/cost summary.
-  - Debt summary.
-  - Cash flow report.
-  - Date range filtering.
-- Implemented:
-  - `GET /accounting/profit/job/:jobId`
-  - `GET /reports/profit/job/:jobId`
-  - `GET /reports/branch-summary`
-  - `GET /reports/customer-summary`
-  - `GET /reports/job-status-summary`
-  - `GET /reports/receivables`
-  - `GET /reports/payables`
-  - `GET /reports/overdue-receivables`
-  - `GET /reports/overdue-payables`
-- Status: PARTIAL
-
-### Feature: Search / Filter
-
-- Required:
-  - Search jobs by Job No., customer, declaration number, created date, status.
-  - Filter accounting entries by job, vendor, status, payment status, and dates.
-  - Pagination for list endpoints.
-- Implemented:
-  - `GET /jobs` supports pagination and filters.
-  - `GET /accounting/revenue` supports pagination and filters.
-  - `GET /accounting/cost` supports pagination and filters.
-  - `GET /audit-logs` supports pagination and filters.
-  - `GET /attachments` supports pagination and module/entity filters.
-- Status: PARTIAL
-
-### Feature: Attachments
-
-- Required:
-  - Upload documents.
-  - Download documents.
-  - List documents by module/entity.
-  - Secure access to document files.
-- Implemented:
-  - `POST /attachments/upload`
-  - `GET /attachments`
-  - `GET /attachments/:id`
-  - `GET /attachments/:id/download`
-  - `DELETE /attachments/:id`
-- Status: PARTIAL
-
-## 5. Missing Features Summary
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `GET` | `/dashboard/stats` | JWT | Totals for jobs, revenue, cost, and profit |
 
 ### Jobs
 
-- Job copy/duplicate API.
-- Job delete/archive API.
-- Several SRS logistics fields are missing from model and DTOs.
-- Automatic job timeline from status changes, accounting events, and attachment events.
-- Customer-name and declaration-number search.
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `POST` | `/jobs` | `job:create` | Create job |
+| `GET` | `/jobs` | JWT | Paginated/filterable list |
+| `GET` | `/jobs/:id` | JWT | Job detail |
+| `PATCH` | `/jobs/:id` | `job:edit` | Update job |
+| `PUT` | `/jobs/:id` | `job:edit` | Frontend compatibility alias for update |
+| `POST` | `/jobs/:id/copy` | `job:create` | Copy job |
+| `DELETE` | `/jobs/:id` | `job:edit` | Archive job |
+| `PATCH` | `/jobs/:id/start` | `job:edit` | Set status to in progress |
+| `PATCH` | `/jobs/:id/close` | `job:close` | Close job |
+| `PATCH` | `/jobs/:id/cancel` | `job:edit` | Cancel job |
+| `GET` | `/jobs/:id/milestones` | JWT | List milestones |
+| `POST` | `/jobs/:id/milestones` | `job:edit` | Add milestone |
+| `PATCH` | `/jobs/:id/milestones/:milestoneId` | `job:edit` | Update milestone |
+| `DELETE` | `/jobs/:id/milestones/:milestoneId` | `job:edit` | Delete milestone |
+
+### Partners
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `POST` | `/partners` | `partner:manage` | Create partner |
+| `GET` | `/partners` | JWT | Paginated/filterable list |
+| `GET` | `/partners/:id` | JWT | Partner detail |
+| `PATCH` | `/partners/:id` | `partner:manage` | Update partner |
+| `PUT` | `/partners/:id` | `partner:manage` | Frontend compatibility alias for update |
+| `DELETE` | `/partners/:id` | `partner:manage` | Deactivate partner |
+| `PATCH` | `/partners/:id/lock` | `partner:manage` | Lock partner |
 
 ### Accounting
 
-- Revenue detail API.
-- Cost detail API.
-- Payment receipt and settlement APIs.
-- Cash/bank account and fund balance APIs.
-- Approval workflow for payment requests.
-- Pricing/rate integration.
-- Chi hộ / thu hộ automation.
-- Debt limit configuration and automatic customer lock.
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `POST` | `/accounting/revenue` | `accounting:create` | Create revenue entry |
+| `GET` | `/accounting/revenue` | JWT | Paginated/filterable revenue list |
+| `GET` | `/accounting/revenue/chart` | JWT | Revenue chart data |
+| `GET` | `/accounting/revenue/job/:jobId` | JWT | Revenue entries by job |
+| `GET` | `/accounting/revenue/:id` | JWT | Revenue detail |
+| `PATCH` | `/accounting/revenue/:id` | `accounting:create` | Update revenue |
+| `PATCH` | `/accounting/revenue/:id/post` | `accounting:post` | Post revenue |
+| `POST` | `/accounting/revenue/:id/void` | `accounting:post` | Void revenue |
+| `PATCH` | `/accounting/revenue/:id/payment-status` | `accounting:post` | Update payment status |
+| `DELETE` | `/accounting/revenue/:id` | `accounting:create` | Delete revenue |
+| `POST` | `/accounting/cost` | `accounting:create` | Create cost entry |
+| `GET` | `/accounting/cost` | JWT | Paginated/filterable cost list |
+| `GET` | `/accounting/cost/chart` | JWT | Cost chart data |
+| `GET` | `/accounting/cost/job/:jobId` | JWT | Cost entries by job |
+| `GET` | `/accounting/cost/:id` | JWT | Cost detail |
+| `PATCH` | `/accounting/cost/:id` | `accounting:create` | Update cost |
+| `PATCH` | `/accounting/cost/:id/post` | `accounting:post` | Post cost |
+| `POST` | `/accounting/cost/:id/void` | `accounting:post` | Void cost |
+| `PATCH` | `/accounting/cost/:id/payment-status` | `accounting:post` | Update payment status |
+| `DELETE` | `/accounting/cost/:id` | `accounting:create` | Delete cost |
+| `POST` | `/accounting/post-all/job/:jobId` | `accounting:post` | Post all entries for a job |
+| `GET` | `/accounting/profit/job/:jobId` | JWT | Job profit summary |
+| `POST` | `/accounting/payments/receipts` | `accounting:create` | Record customer receipt |
+| `POST` | `/accounting/payments/vendor` | `accounting:create` | Record vendor payment |
+| `GET` | `/accounting/periods` | `accounting:post` | List accounting periods |
+| `POST` | `/accounting/periods/lock` | `accounting:post` | Lock period |
+| `POST` | `/accounting/periods/unlock` | `accounting:post` | Unlock period |
+
+### Payment Requests
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `POST` | `/payment-requests` | `accounting:create` | Create payment request |
+| `GET` | `/payment-requests` | `accounting:view` | List payment requests |
+| `GET` | `/payment-requests/:id` | `accounting:view` | Payment request detail |
+| `PATCH` | `/payment-requests/:id/approve` | `accounting:post` | Approval step |
+| `PATCH` | `/payment-requests/:id/reject` | `accounting:post` | Reject with reason |
+| `PATCH` | `/payment-requests/:id/final-approve` | `accounting:post` | Final approval |
+
+### Debt Policies
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `POST` | `/debt-policies` | `partner:manage` | Upsert debt policy |
+| `GET` | `/debt-policies` | `partner:manage` | List debt policies |
+| `GET` | `/debt-policies/:id` | `partner:manage` | Debt policy detail |
 
 ### Reports
 
-- Cash flow report.
-- Period-based P&L by month, quarter, and year.
-- Revenue/cost chart endpoints required by frontend.
-- Report export endpoints.
-- Consistent report metadata and totals.
-
-### Audit
-
-- Audit logging for financial create/update/delete.
-- Audit logging for attachment upload/delete.
-- Audit logging for milestones and accounting period lock/unlock.
-- IP address capture.
-- Audit log detail endpoint by log id.
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `GET` | `/reports/profit/job/:jobId` | `accounting:view` | Job profit |
+| `GET` | `/reports/branch-summary` | `accounting:view` | Branch summary |
+| `GET` | `/reports/customer-summary` | `accounting:view` | Customer summary |
+| `GET` | `/reports/pnl` | `accounting:view` | P&L by period |
+| `GET` | `/reports/cash-flow` | `accounting:view` | Cash flow |
+| `GET` | `/reports/job-status-summary` | `accounting:view` | Job status counts |
+| `GET` | `/reports/receivables` | `accounting:view` | Receivables |
+| `GET` | `/reports/payables` | `accounting:view` | Payables |
+| `GET` | `/reports/overdue-receivables` | `accounting:view` | Overdue receivables |
+| `GET` | `/reports/overdue-payables` | `accounting:view` | Overdue payables |
 
 ### Attachments
 
-- Parent entity validation for `moduleName` and `entityId`.
-- Module-specific authorization.
-- Usage of attachment-specific permissions.
-- Attachment audit logging.
-
-## 6. Risk Assessment
-
-### Missing Business Rules
-
-- No debt limit enforcement before creating jobs.
-- No customer auto-lock when overdue or over debt limit.
-- No payment approval workflow.
-- No branch-specific approval workflow.
-- No pricing/rate rules.
-- No chi hộ / thu hộ automation.
-
-### Missing Validations
-
-- Cost `vendorId` is not validated against partner/vendor records.
-- Attachment `moduleName/entityId` is not validated against a real parent entity.
-- Partner list is not paginated.
-- Job model lacks required SRS fields for customs and logistics operations.
-
-### Missing Transaction Handling
-
-- Posting and voiding use transactions.
-- Revenue/cost create, update, delete do not use explicit transactions.
-- Period lock validation does not cover all financial mutations.
-
-### Security Risks
-
-- Attachment endpoints use `job:edit` permission instead of seeded `attachment:upload` and `attachment:delete`.
-- Attachment download/list/delete do not verify access to the parent entity.
-- Branch-level data isolation is not enforced in job, accounting, and report queries.
-- Refresh token endpoint is called by frontend but not implemented by backend.
-
-### Data Consistency Risks
-
-- Financial period lock checks are incomplete.
-- Posting checks current date, not necessarily document date.
-- Audit trail does not cover all critical financial mutations.
-- Frontend uses `PUT` for update while backend uses `PATCH`.
-- Frontend expects dashboard/chart endpoints that do not exist.
-- Phase 2 migration may fail on MariaDB because `revenue_entries` adds `voided_at AFTER voided_by` before adding `voided_by`.
-
-## 7. Recommended Next Actions
-
-### HIGH
-
-- Align frontend and backend update methods for jobs and partners.
-- Implement `POST /auth/refresh` or remove frontend refresh-token retry behavior.
-- Add missing dashboard/chart endpoints or update frontend to use report APIs.
-- Add period-lock validation to revenue/cost create, update, and delete.
-- Add audit logging for all financial mutations.
-- Fix attachment authorization and parent entity validation.
-- Review and fix Phase 2 migration ordering issue.
-
-### MEDIUM
-
-- Add job copy and archive/delete APIs.
-- Add revenue and cost detail APIs.
-- Add partner pagination and search.
-- Add missing job fields from the SRS.
-- Add report export endpoints.
-- Add period-based P&L reporting.
-- Add branch-level data access enforcement.
-
-### LOW
-
-- Add audit log detail endpoint.
-- Add attachment metadata update endpoint.
-- Normalize report response schemas.
-- Add health and deployment smoke-test documentation.
-
-## 8. Suggested Backend Tasks
-
-| API endpoint | Description | Module | Priority |
+| Method | Path | Auth | Notes |
 |---|---|---|---|
-| `POST /auth/refresh` | Add refresh-token support or explicitly remove refresh workflow from frontend. | Auth | HIGH |
-| `GET /dashboard/stats` | Provide dashboard totals for jobs, revenue, cost, and profit. | Reports/Dashboard | HIGH |
-| `GET /accounting/revenue/chart` | Provide revenue chart data for frontend dashboard. | Accounting/Reports | HIGH |
-| `GET /accounting/cost/chart` | Provide cost chart data for frontend dashboard. | Accounting/Reports | HIGH |
-| `PATCH /jobs/:id` frontend alignment | Change frontend from `PUT` to `PATCH`, or add backend `PUT`. | Jobs | HIGH |
-| `PATCH /partners/:id` frontend alignment | Change frontend from `PUT` to `PATCH`, or add backend `PUT`. | Partners | HIGH |
-| `GET /accounting/revenue/:id` | Add revenue entry detail endpoint. | Accounting | MEDIUM |
-| `GET /accounting/cost/:id` | Add cost entry detail endpoint. | Accounting | MEDIUM |
-| `POST /jobs/:id/copy` | Duplicate an existing job with a new unique job code. | Jobs | MEDIUM |
-| `DELETE /jobs/:id` | Soft-delete or archive a job with business-rule protection. | Jobs | MEDIUM |
-| `DELETE /partners/:id` | Soft-delete/deactivate partner records. | Partners | MEDIUM |
-| `GET /partners` | Add pagination, keyword search, active status filter, and consistent `{ data, meta }` response. | Partners | MEDIUM |
-| `POST /attachments/upload` | Validate parent entity, use attachment permissions, and audit upload. | Attachments | HIGH |
-| `GET /attachments/:id/download` | Enforce parent-entity authorization before file streaming. | Attachments | HIGH |
-| `POST /payment-requests` | Create payment request for approval workflow. | Accounting | HIGH |
-| `PATCH /payment-requests/:id/approve` | Department-head approval step. | Accounting/Workflow | HIGH |
-| `PATCH /payment-requests/:id/reject` | Reject payment request with reason. | Accounting/Workflow | HIGH |
-| `PATCH /payment-requests/:id/final-approve` | Director final approval step. | Accounting/Workflow | HIGH |
-| `GET /reports/pnl` | Add P&L by job, customer, month, quarter, and year. | Reports | MEDIUM |
-| `GET /reports/cash-flow` | Add cash flow report. | Reports | MEDIUM |
-| `POST /accounting/payments/receipts` | Record customer receipt with amount, date, method, and account. | Accounting | MEDIUM |
-| `POST /accounting/payments/vendor` | Record vendor payment with amount, date, method, and account. | Accounting | MEDIUM |
-| `POST /debt-policies` | Configure customer debt amount and debt age limits. | Accounting/Partners | MEDIUM |
-| `PATCH /partners/:id/lock` | Lock customer due to debt policy violation. | Partners | MEDIUM |
-| `GET /audit-logs/:id` | Retrieve audit log detail by id. | Audit Logs | LOW |
+| `POST` | `/attachments/upload` | JWT/permission | Upload file |
+| `GET` | `/attachments` | JWT | List attachments |
+| `GET` | `/attachments/:id` | JWT | Attachment metadata |
+| `GET` | `/attachments/:id/download` | JWT | Download file |
+| `DELETE` | `/attachments/:id` | JWT/permission | Delete attachment |
+
+### Audit Logs
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `GET` | `/audit-logs` | JWT | Paginated/filterable audit logs |
+| `GET` | `/audit-logs/:id` | JWT | Audit log detail |
+| `GET` | `/audit-logs/entry/:id` | JWT | Audit log detail alias |
+| `GET` | `/audit-logs/:entity/:id` | JWT | Entity audit history |
+
+### System
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `GET` | `/health` | Public | Full health check |
+| `GET` | `/health/db` | Public | DB health |
+| `GET` | `/health/live` | Public | Liveness |
+
+## 4. Validation Results
+
+Resolved items from the earlier Phase 2 gap report:
+
+- `POST /auth/refresh` implemented
+- `GET /dashboard/stats` implemented
+- `GET /accounting/revenue/chart` implemented
+- `GET /accounting/cost/chart` implemented
+- `PUT /jobs/:id` compatibility route added
+- `PUT /partners/:id` compatibility route added
+- `DELETE /jobs/:id` archive route added
+- `DELETE /partners/:id` deactivate route added
+- `GET /partners` now supports frontend pagination shape
+- Revenue and cost detail endpoints added
+- Payment request endpoints added
+- Debt policy endpoints added
+- P&L and cash-flow reports added
+- Swagger available at both `/docs` and `/api/v1/docs`
+- JWT can be temporarily bypassed with `DISABLE_AUTH=true`
+- API test seed script exists and has been used against local/prod DBs
+
+## 5. Auth and Swagger Notes
+
+Normal testing flow:
+
+1. Open `/api/v1/docs`.
+2. Run `POST /api/v1/auth/login`.
+3. Copy `accessToken`.
+4. Click Swagger `Authorize`.
+5. Paste the token.
+6. Call protected APIs.
+
+If `/auth/me` returns `401`, Swagger is working correctly but the request has no valid Bearer token.
+
+Temporary auth bypass exists for server testing:
+
+```env
+DISABLE_AUTH=true
+DISABLE_AUTH_USER_ID=1
+```
+
+Do not leave `DISABLE_AUTH=true` enabled for production use.
+
+## 6. Migration and Seed Notes
+
+Backend commands:
+
+```powershell
+npm run migration:run
+npm run seed:api-test
+```
+
+The seed script:
+
+- Creates or updates the `api.tester` login
+- Seeds test branch, partners, jobs, accounting revenue, accounting cost, and optional Phase 2 records
+- Can be pointed at prod using `.env.prod`
+
+Use `.env.prod` only as an execution source; do not copy secrets into documentation.
+
+## 7. Deployment Notes
+
+Backend deployment zip:
+
+```text
+D:\CODE\hr-duongminh\hr-app-localsetup\hr-duongminh-api-deploy.zip
+```
+
+Frontend deployment zip:
+
+```text
+D:\CODE\hr-duongminh\front end\hr-duongminh-app-fe\erp-logistics-static.zip
+```
+
+Backend post-deploy smoke checks:
+
+```text
+GET https://api.hr.duongminhvn.com/api/v1/health
+GET https://api.hr.duongminhvn.com/api/v1/docs
+POST https://api.hr.duongminhvn.com/api/v1/auth/login
+GET https://api.hr.duongminhvn.com/api/v1/auth/me
+GET https://api.hr.duongminhvn.com/api/v1/dashboard/stats
+GET https://api.hr.duongminhvn.com/api/v1/jobs?page=1&limit=10
+GET https://api.hr.duongminhvn.com/api/v1/partners?page=1&limit=10
+GET https://api.hr.duongminhvn.com/api/v1/accounting/revenue?page=1&limit=10
+GET https://api.hr.duongminhvn.com/api/v1/accounting/cost?page=1&limit=10
+```
+
+## 8. Remaining Risks and Follow-Up
+
+Known follow-up items:
+
+- Verify every write endpoint in Swagger against prod data with JWT enabled.
+- Confirm Plesk Node process restarts cleanly after zip replacement.
+- Confirm frontend pages show backend seed data after static zip deployment.
+- Review attachment authorization against final business rules.
+- Review branch-level data isolation for jobs, accounting, and reports.
+- Review payment workflow roles if production roles differ from seeded test permissions.
+- Run a real audit-log check after create/update/post/void/delete flows.
+- Fix any remaining README encoding issues if the file is used as customer-facing documentation.
+
+## 9. Suggested Next Test Plan
+
+1. Login as `api.tester`.
+2. Open dashboard and confirm totals load from `/dashboard/stats`.
+3. Open jobs list and job detail.
+4. Open partners list.
+5. Open accounting revenue and cost tabs.
+6. Test protected write APIs in Swagger:
+   - create partner
+   - create job
+   - create revenue
+   - create cost
+   - post revenue/cost
+   - void revenue/cost
+7. Confirm audit logs are created for write operations.
+8. Confirm frontend deployment zip calls the production API host, not localhost.
