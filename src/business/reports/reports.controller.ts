@@ -31,6 +31,18 @@ export class ReportsController {
     return this.svc.revenueByCustomer(filter);
   }
 
+  @RequirePermission('accounting:view')
+  @Get('pnl')
+  pnl(@Query() filter: ReportFilterDto) {
+    return this.svc.pnlByPeriod(filter);
+  }
+
+  @RequirePermission('accounting:view')
+  @Get('cash-flow')
+  cashFlow(@Query() filter: ReportFilterDto) {
+    return this.svc.cashFlow(filter);
+  }
+
   /** Open vs closed job counts by status */
   @RequirePermission('accounting:view')
   @Get('job-status-summary')

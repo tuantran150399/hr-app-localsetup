@@ -12,6 +12,9 @@ import { AuditLogsModule } from './business/audit-logs/audit-logs.module';
 import { HealthModule } from './business/health/health.module';
 import { AttachmentsModule } from './business/attachments/attachments.module';
 import { ReportsModule } from './business/reports/reports.module';
+import { DashboardModule } from './business/dashboard/dashboard.module';
+import { PaymentRequestsModule } from './business/payment-requests/payment-requests.module';
+import { DebtPoliciesModule } from './business/debt-policies/debt-policies.module';
 import { getEnvFilePath } from './config/env-file-path';
 
 @Module({
@@ -32,6 +35,9 @@ import { getEnvFilePath } from './config/env-file-path';
     HealthModule,
     AttachmentsModule,
     ReportsModule,
+    DashboardModule,
+    PaymentRequestsModule,
+    DebtPoliciesModule,
   ],
 })
 export class AppModule {}

@@ -56,3 +56,30 @@ export class LockPeriodDto {
   @IsInt() @Min(2000) year: number;
   @IsInt() @Min(1) month: number;
 }
+
+export class RecordPaymentDto {
+  @Type(() => Number)
+  @IsInt()
+  entryId: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  amount: number;
+
+  @IsOptional()
+  @IsDateString()
+  paymentDate?: string;
+
+  @IsOptional()
+  @IsString()
+  method?: string;
+
+  @IsOptional()
+  @IsString()
+  accountRef?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}

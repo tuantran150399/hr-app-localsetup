@@ -1,4 +1,4 @@
-﻿import { Controller, Get, Param, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
 import { AuditLogsService } from './audit-logs.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -9,9 +9,6 @@ import { RequirePermission } from '../auth/decorators/require-permission.decorat
 export class AuditLogsController {
   constructor(private svc: AuditLogsService) {}
 
-  /**
-   * GET /audit-logs?page=1&limit=50&entityName=Job&userId=3&action=CREATE&dateFrom=2026-01-01&dateTo=2026-12-31
-   */
   @RequirePermission('auditlog:view')
   @Get()
   findAll(
@@ -34,6 +31,18 @@ export class AuditLogsController {
       dateFrom,
       dateTo,
     });
+  }
+
+  @RequirePermission('auditlog:view')
+  @Get(':id')
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.findOne(id);
+  }
+
+  @RequirePermission('auditlog:view')
+  @Get('entry/:id')
+  findOneLegacy(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.findOne(id);
   }
 
   @RequirePermission('auditlog:view')

@@ -1,5 +1,7 @@
-﻿import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { PartnerType } from '../../../models/partner.entity';
+import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class CreatePartnerDto {
   @IsNotEmpty() @IsString() code: string;
@@ -20,5 +22,15 @@ export class UpdatePartnerDto {
   @IsOptional() @IsString() email?: string;
   @IsOptional() @IsString() address?: string;
   @IsOptional() @IsString() taxCode?: string;
-  @IsOptional() isActive?: boolean;
+  @IsOptional() @IsBoolean() isActive?: boolean;
+}
+
+export class PartnerFilterDto extends PaginationDto {
+  @IsOptional() @IsEnum(PartnerType) type?: PartnerType;
+  @IsOptional() @IsEnum(PartnerType) partnerType?: PartnerType;
+  @IsOptional() @IsString() keyword?: string;
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  @IsBoolean()
+  isActive?: boolean;
 }

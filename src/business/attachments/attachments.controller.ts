@@ -15,7 +15,6 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
-import * as path from 'path';
 import { AttachmentsService } from './attachments.service';
 import { AttachmentFilterDto } from './dto/attachment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -23,22 +22,14 @@ import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 @UseGuards(JwtAuthGuard, PermissionGuard)
 @Controller('attachments')
 export class AttachmentsController {
   constructor(private svc: AttachmentsService) {}
 
-  /**
-   * Upload a file for a specific module + entity.
-   * POST /attachments/upload
-   * Body (multipart): file, moduleName, entityId
-   *
-   * File size is validated here — Multer memStorage keeps file in RAM temporarily.
-   * For production on Plesk, 20 MB RAM per upload is acceptable for logistics docs.
-   */
-  @RequirePermission('job:edit')
+  @RequirePermission('attachment:upload')
   @Post('upload')
   @UseInterceptors(FileInterceptor('file'))
   async upload(
@@ -62,7 +53,6 @@ export class AttachmentsController {
     );
   }
 
-  /** List attachments with optional module/entity filter + pagination */
   @Get()
   findAll(@Query() filter: AttachmentFilterDto) {
     return this.svc.findAll(filter);
@@ -73,11 +63,6 @@ export class AttachmentsController {
     return this.svc.findOne(id);
   }
 
-  /**
-   * Secure file download — file path is NEVER exposed to the client.
-   * The endpoint streams the file from disk after JWT validation.
-   * GET /attachments/:id/download
-   */
   @Get(':id/download')
   async download(
     @Param('id', ParseIntPipe) id: number,
@@ -89,9 +74,9 @@ export class AttachmentsController {
     res.sendFile(absolutePath);
   }
 
-  @RequirePermission('job:edit')
+  @RequirePermission('attachment:delete')
   @Delete(':id')
-  delete(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.delete(id);
+  delete(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
+    return this.svc.delete(id, user.id);
   }
 }

@@ -10,6 +10,13 @@ export class CreateJobDto {
   @IsOptional() @IsInt() partnerId?: number;
   @IsOptional() @IsInt() branchId?: number;
   @IsOptional() @IsInt() assignedUserId?: number;
+  @IsOptional() @IsInt() agentId?: number;
+  @IsOptional() @IsString() shipper?: string;
+  @IsOptional() @IsString() consignee?: string;
+  @IsOptional() @IsString() declarationNo?: string;
+  @IsOptional() @IsString() businessType?: string;
+  @IsOptional() @IsString() customsLane?: string;
+  @IsOptional() @IsString() cargoType?: string;
   // Shipment details
   @IsOptional() @IsString() bookingRef?: string;
   @IsOptional() @IsString() vesselName?: string;
@@ -22,6 +29,7 @@ export class CreateJobDto {
   @IsOptional() @IsDateString() eta?: string;
   @IsOptional() @IsDateString() atd?: string;
   @IsOptional() @IsDateString() ata?: string;
+  @IsOptional() @IsDateString() actualDeliveryDate?: string;
   @IsOptional() @IsString() pol?: string;
   @IsOptional() @IsString() pod?: string;
   @IsOptional() @IsString() origin?: string;
@@ -36,6 +44,13 @@ export class UpdateJobDto {
   @IsOptional() @IsInt() partnerId?: number;
   @IsOptional() @IsInt() branchId?: number;
   @IsOptional() @IsInt() assignedUserId?: number;
+  @IsOptional() @IsInt() agentId?: number;
+  @IsOptional() @IsString() shipper?: string;
+  @IsOptional() @IsString() consignee?: string;
+  @IsOptional() @IsString() declarationNo?: string;
+  @IsOptional() @IsString() businessType?: string;
+  @IsOptional() @IsString() customsLane?: string;
+  @IsOptional() @IsString() cargoType?: string;
   @IsOptional() @IsString() bookingRef?: string;
   @IsOptional() @IsString() vesselName?: string;
   @IsOptional() @IsString() voyageNo?: string;
@@ -47,6 +62,7 @@ export class UpdateJobDto {
   @IsOptional() @IsDateString() eta?: string;
   @IsOptional() @IsDateString() atd?: string;
   @IsOptional() @IsDateString() ata?: string;
+  @IsOptional() @IsDateString() actualDeliveryDate?: string;
   @IsOptional() @IsString() pol?: string;
   @IsOptional() @IsString() pod?: string;
   @IsOptional() @IsString() origin?: string;

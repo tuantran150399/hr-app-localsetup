@@ -1,4 +1,4 @@
-﻿import { Controller, Get, Post, Patch, Delete, Body, Param, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Body, Param, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
 import { JobsService } from './jobs.service';
 import { CreateJobDto, UpdateJobDto, JobFilterDto, CreateMilestoneDto, UpdateMilestoneDto } from './dto/job.dto';
 import { JobStatus } from '../../models/job.entity';
@@ -24,12 +24,32 @@ export class JobsController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) { return this.svc.findOne(id); }
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.findOne(id);
+  }
 
   @RequirePermission('job:edit')
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateJobDto, @CurrentUser() user: { id: number }) {
     return this.svc.update(id, dto, user.id);
+  }
+
+  @RequirePermission('job:edit')
+  @Put(':id')
+  replace(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateJobDto, @CurrentUser() user: { id: number }) {
+    return this.svc.update(id, dto, user.id);
+  }
+
+  @RequirePermission('job:create')
+  @Post(':id/copy')
+  copy(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateJobDto, @CurrentUser() user: { id: number }) {
+    return this.svc.copy(id, dto, user.id);
+  }
+
+  @RequirePermission('job:edit')
+  @Delete(':id')
+  archive(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
+    return this.svc.archive(id, user.id);
   }
 
   @RequirePermission('job:close')
@@ -49,8 +69,6 @@ export class JobsController {
   start(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
     return this.svc.updateStatus(id, JobStatus.IN_PROGRESS, user.id);
   }
-
-  // ─── Milestones ──────────────────────────────────────────────────────────
 
   @Get(':id/milestones')
   getMilestones(@Param('id', ParseIntPipe) id: number) {
@@ -83,7 +101,8 @@ export class JobsController {
   deleteMilestone(
     @Param('id', ParseIntPipe) id: number,
     @Param('milestoneId', ParseIntPipe) milestoneId: number,
+    @CurrentUser() user: { id: number },
   ) {
-    return this.svc.deleteMilestone(id, milestoneId);
+    return this.svc.deleteMilestone(id, milestoneId, user.id);
   }
 }

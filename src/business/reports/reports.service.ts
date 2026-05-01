@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Job, JobStatus } from '../../models/job.entity';
 import { RevenueEntry, AccountingStatus, PaymentStatus } from '../../models/revenue-entry.entity';
 import { CostEntry } from '../../models/cost-entry.entity';
+import { Partner } from '../../models/partner.entity';
 import { ReportFilterDto } from './dto/report-filter.dto';
 
 @Injectable()
@@ -117,6 +118,137 @@ export class ReportsService {
     }
     const rows = [...map.values()].map((r) => ({ ...r, profit: r.totalRevenue - r.totalCost }));
     return { data: rows };
+  }
+
+  async pnlByPeriod(filter: ReportFilterDto) {
+    if (filter.groupBy === 'job') return this.pnlByJob(filter);
+    if (filter.groupBy === 'customer') return this.pnlByCustomer(filter);
+
+    const groupBy = filter.groupBy ?? 'month';
+    const [revenue, cost] = await Promise.all([
+      this.periodSum(this.revRepo, 'r', filter, groupBy),
+      this.periodSum(this.costRepo, 'c', filter, groupBy),
+    ]);
+    const map = new Map<string, { period: string; totalRevenue: number; totalCost: number; profit: number }>();
+    for (const row of revenue) {
+      map.set(row.period, { period: row.period, totalRevenue: row.totalAmount, totalCost: 0, profit: row.totalAmount });
+    }
+    for (const row of cost) {
+      const existing = map.get(row.period) ?? { period: row.period, totalRevenue: 0, totalCost: 0, profit: 0 };
+      existing.totalCost = row.totalAmount;
+      existing.profit = existing.totalRevenue - existing.totalCost;
+      map.set(row.period, existing);
+    }
+    return { data: [...map.values()].sort((a, b) => a.period.localeCompare(b.period)) };
+  }
+
+  async cashFlow(filter: ReportFilterDto) {
+    const groupBy = ['month', 'quarter', 'year'].includes(filter.groupBy ?? '')
+      ? filter.groupBy as 'month' | 'quarter' | 'year'
+      : 'month';
+    const [receipts, payments] = await Promise.all([
+      this.periodSum(this.revRepo, 'r', filter, groupBy, [PaymentStatus.PAID]),
+      this.periodSum(this.costRepo, 'c', filter, groupBy, [PaymentStatus.PAID]),
+    ]);
+    const map = new Map<string, { period: string; cashIn: number; cashOut: number; netCashFlow: number }>();
+    for (const row of receipts) {
+      map.set(row.period, { period: row.period, cashIn: row.totalAmount, cashOut: 0, netCashFlow: row.totalAmount });
+    }
+    for (const row of payments) {
+      const existing = map.get(row.period) ?? { period: row.period, cashIn: 0, cashOut: 0, netCashFlow: 0 };
+      existing.cashOut = row.totalAmount;
+      existing.netCashFlow = existing.cashIn - existing.cashOut;
+      map.set(row.period, existing);
+    }
+    return { data: [...map.values()].sort((a, b) => a.period.localeCompare(b.period)) };
+  }
+
+  private async periodSum(
+    repo: Repository<RevenueEntry | CostEntry>,
+    alias: string,
+    filter: ReportFilterDto,
+    groupBy: 'month' | 'quarter' | 'year',
+    paymentStatuses?: PaymentStatus[],
+  ) {
+    const dateExpr = `COALESCE(${alias}.docDate, ${alias}.createdAt)`;
+    const periodExpr = groupBy === 'year'
+      ? `DATE_FORMAT(${dateExpr}, '%Y')`
+      : groupBy === 'quarter'
+        ? `CONCAT(YEAR(${dateExpr}), '-Q', QUARTER(${dateExpr}))`
+        : `DATE_FORMAT(${dateExpr}, '%Y-%m')`;
+    const qb = repo.createQueryBuilder(alias)
+      .innerJoin(Job, 'j', `j.id = ${alias}.jobId`)
+      .select(periodExpr, 'period')
+      .addSelect(`SUM(${alias}.localAmount)`, 'totalAmount')
+      .where(`${alias}.status = :status`, { status: AccountingStatus.POSTED });
+    if (filter.dateFrom) qb.andWhere(`${dateExpr} >= :dateFrom`, { dateFrom: filter.dateFrom });
+    if (filter.dateTo) qb.andWhere(`${dateExpr} <= :dateTo`, { dateTo: filter.dateTo });
+    if (filter.branchId) qb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
+    if (filter.partnerId) qb.andWhere('j.partnerId = :partnerId', { partnerId: filter.partnerId });
+    if (paymentStatuses?.length) qb.andWhere(`${alias}.paymentStatus IN (:...paymentStatuses)`, { paymentStatuses });
+    qb.groupBy('period').orderBy('period', 'ASC');
+    const rows = await qb.getRawMany();
+    return rows.map((row) => ({ period: row.period, totalAmount: Number(row.totalAmount ?? 0) }));
+  }
+
+  private async pnlByJob(filter: ReportFilterDto) {
+    const [revenue, cost] = await Promise.all([
+      this.groupSum(this.revRepo, 'r', filter, 'j.id', ['j.jobCode']),
+      this.groupSum(this.costRepo, 'c', filter, 'j.id', ['j.jobCode']),
+    ]);
+    const map = new Map<number, { jobId: number; jobCode: string; totalRevenue: number; totalCost: number; profit: number }>();
+    for (const row of revenue) {
+      map.set(row.id, { jobId: row.id, jobCode: row.label ?? '', totalRevenue: row.totalAmount, totalCost: 0, profit: row.totalAmount });
+    }
+    for (const row of cost) {
+      const existing = map.get(row.id) ?? { jobId: row.id, jobCode: row.label ?? '', totalRevenue: 0, totalCost: 0, profit: 0 };
+      existing.totalCost = row.totalAmount;
+      existing.profit = existing.totalRevenue - existing.totalCost;
+      map.set(row.id, existing);
+    }
+    return { data: [...map.values()].sort((a, b) => a.jobCode.localeCompare(b.jobCode)) };
+  }
+
+  private async pnlByCustomer(filter: ReportFilterDto) {
+    const [revenue, cost] = await Promise.all([
+      this.groupSum(this.revRepo, 'r', filter, 'j.partnerId', ['p.name']),
+      this.groupSum(this.costRepo, 'c', filter, 'j.partnerId', ['p.name']),
+    ]);
+    const map = new Map<number, { partnerId: number; partnerName: string; totalRevenue: number; totalCost: number; profit: number }>();
+    for (const row of revenue) {
+      map.set(row.id, { partnerId: row.id, partnerName: row.label ?? '', totalRevenue: row.totalAmount, totalCost: 0, profit: row.totalAmount });
+    }
+    for (const row of cost) {
+      const existing = map.get(row.id) ?? { partnerId: row.id, partnerName: row.label ?? '', totalRevenue: 0, totalCost: 0, profit: 0 };
+      existing.totalCost = row.totalAmount;
+      existing.profit = existing.totalRevenue - existing.totalCost;
+      map.set(row.id, existing);
+    }
+    return { data: [...map.values()].sort((a, b) => a.partnerName.localeCompare(b.partnerName)) };
+  }
+
+  private async groupSum(
+    repo: Repository<RevenueEntry | CostEntry>,
+    alias: string,
+    filter: ReportFilterDto,
+    groupColumn: string,
+    labelColumns: string[],
+  ) {
+    const dateExpr = `COALESCE(${alias}.docDate, ${alias}.createdAt)`;
+    const qb = repo.createQueryBuilder(alias)
+      .innerJoin(Job, 'j', `j.id = ${alias}.jobId`)
+      .leftJoin(Partner, 'p', 'p.id = j.partnerId')
+      .select(groupColumn, 'id')
+      .addSelect(labelColumns[0], 'label')
+      .addSelect(`SUM(${alias}.localAmount)`, 'totalAmount')
+      .where(`${alias}.status = :status`, { status: AccountingStatus.POSTED });
+    if (filter.dateFrom) qb.andWhere(`${dateExpr} >= :dateFrom`, { dateFrom: filter.dateFrom });
+    if (filter.dateTo) qb.andWhere(`${dateExpr} <= :dateTo`, { dateTo: filter.dateTo });
+    if (filter.branchId) qb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
+    if (filter.partnerId) qb.andWhere('j.partnerId = :partnerId', { partnerId: filter.partnerId });
+    qb.groupBy(groupColumn).addGroupBy(labelColumns[0]);
+    const rows = await qb.getRawMany();
+    return rows.map((row) => ({ id: Number(row.id), label: row.label, totalAmount: Number(row.totalAmount ?? 0) }));
   }
 
   // ─── Job status summary ────────────────────────────────────────────────────

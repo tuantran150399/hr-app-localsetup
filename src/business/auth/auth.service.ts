@@ -1,4 +1,5 @@
-﻿import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -13,6 +14,7 @@ export class AuthService {
     @InjectRepository(User)
     private userRepo: Repository<User>,
     private jwtService: JwtService,
+    private config: ConfigService,
   ) {}
 
   async login(dto: LoginDto) {
@@ -24,23 +26,43 @@ export class AuthService {
     const valid = await bcrypt.compare(dto.password, user.password);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    const roles = user.roles.map((r) => r.name);
-    const permissionSet = new Set<string>();
-    user.roles.forEach((r) => r.permissions?.forEach((p) => permissionSet.add(p.name)));
-    const permissions = Array.from(permissionSet);
-
-    const payload: JwtPayload = { sub: user.id, username: user.username, roles, permissions };
+    const payload = this.buildPayload(user);
     return {
-      accessToken: this.jwtService.sign(payload),
+      accessToken: this.signAccessToken(payload),
+      refreshToken: this.signRefreshToken(payload),
       user: {
         id: user.id,
         username: user.username,
         fullName: user.fullName,
         email: user.email,
-        roles,
-        permissions,
+        roles: payload.roles,
+        permissions: payload.permissions,
       },
     };
+  }
+
+  async refresh(refreshToken: string) {
+    try {
+      const decoded = await this.jwtService.verifyAsync<JwtPayload & { typ?: string }>(
+        refreshToken,
+        { secret: this.config.get<string>('JWT_SECRET') },
+      );
+      if (decoded.typ !== 'refresh') throw new UnauthorizedException('Invalid refresh token');
+
+      const user = await this.userRepo.findOne({
+        where: { id: decoded.sub, isActive: true },
+        relations: ['roles', 'roles.permissions'],
+      });
+      if (!user) throw new UnauthorizedException('Invalid refresh token');
+
+      const payload = this.buildPayload(user);
+      return {
+        accessToken: this.signAccessToken(payload),
+        refreshToken: this.signRefreshToken(payload),
+      };
+    } catch {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
   }
 
   async getMe(userId: number) {
@@ -49,17 +71,38 @@ export class AuthService {
       relations: ['roles', 'roles.permissions'],
     });
     if (!user) throw new UnauthorizedException();
-    const roles = user.roles.map((r) => r.name);
-    const permissionSet = new Set<string>();
-    user.roles.forEach((r) => r.permissions?.forEach((p) => permissionSet.add(p.name)));
+    const payload = this.buildPayload(user);
     return {
       id: user.id,
       username: user.username,
       fullName: user.fullName,
       email: user.email,
       branchId: user.branchId,
+      roles: payload.roles,
+      permissions: payload.permissions,
+    };
+  }
+
+  private buildPayload(user: User): JwtPayload {
+    const roles = user.roles.map((r) => r.name);
+    const permissionSet = new Set<string>();
+    user.roles.forEach((r) => r.permissions?.forEach((p) => permissionSet.add(p.name)));
+    return {
+      sub: user.id,
+      username: user.username,
       roles,
       permissions: Array.from(permissionSet),
     };
+  }
+
+  private signAccessToken(payload: JwtPayload) {
+    return this.jwtService.sign(payload);
+  }
+
+  private signRefreshToken(payload: JwtPayload) {
+    return this.jwtService.sign(
+      { ...payload, typ: 'refresh' },
+      { expiresIn: this.config.get<string>('JWT_REFRESH_EXPIRES_IN', '7d') as any },
+    );
   }
 }

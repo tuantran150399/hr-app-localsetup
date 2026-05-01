@@ -105,13 +105,9 @@ export class Phase2Schema1745200000000 implements MigrationInterface {
         ADD COLUMN doc_date        DATE NULL AFTER invoice_number,
         ADD COLUMN due_date        DATE NULL AFTER doc_date,
         ADD COLUMN reversal_of     INT UNSIGNED NULL AFTER due_date,
-        ADD COLUMN voided_at       DATETIME NULL AFTER voided_by,
-        ADD COLUMN voided_by       INT UNSIGNED NULL AFTER reversal_of
+        ADD COLUMN voided_by       INT UNSIGNED NULL AFTER reversal_of,
+        ADD COLUMN voided_at       DATETIME NULL AFTER voided_by
     `);
-
-    // Fix column ordering issue — voided_at was added before voided_by above
-    // Doing it cleanly without two separate ALTER statements is cleaner:
-    // (the above ordering is fine — just note the logical order)
 
     // ── cost_entries: same set of columns ────────────────────────────────────
     await queryRunner.query(`

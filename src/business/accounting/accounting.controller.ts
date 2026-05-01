@@ -1,6 +1,6 @@
-﻿import { Controller, Get, Post, Patch, Delete, Body, Param, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
-import { CreateEntryDto, UpdateEntryDto, EntryFilterDto, UpdatePaymentStatusDto, VoidEntryDto, LockPeriodDto } from './dto/entry.dto';
+import { CreateEntryDto, UpdateEntryDto, EntryFilterDto, UpdatePaymentStatusDto, VoidEntryDto, LockPeriodDto, RecordPaymentDto } from './dto/entry.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
@@ -10,8 +10,6 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 @Controller('accounting')
 export class AccountingController {
   constructor(private svc: AccountingService) {}
-
-  // ─── Revenue ──────────────────────────────────────────────────────────────
 
   @RequirePermission('accounting:create')
   @Post('revenue')
@@ -24,9 +22,19 @@ export class AccountingController {
     return this.svc.findRevenue(filter);
   }
 
+  @Get('revenue/chart')
+  revenueChart(@Query() filter: EntryFilterDto) {
+    return this.svc.getRevenueChart(filter);
+  }
+
   @Get('revenue/job/:jobId')
   revenueByJob(@Param('jobId', ParseIntPipe) jobId: number) {
     return this.svc.findRevenueByJob(jobId);
+  }
+
+  @Get('revenue/:id')
+  revenueDetail(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.findRevenueOne(id);
   }
 
   @RequirePermission('accounting:create')
@@ -41,7 +49,6 @@ export class AccountingController {
     return this.svc.postRevenue(id, user.id);
   }
 
-  /** Void a posted revenue entry and create a reversal. Requires accounting:post permission. */
   @RequirePermission('accounting:post')
   @Post('revenue/:id/void')
   voidRevenue(
@@ -52,7 +59,6 @@ export class AccountingController {
     return this.svc.voidRevenue(id, user.id, dto.reason);
   }
 
-  /** Update payment status on a POSTED revenue entry. */
   @RequirePermission('accounting:post')
   @Patch('revenue/:id/payment-status')
   updateRevenuePayment(
@@ -65,11 +71,9 @@ export class AccountingController {
 
   @RequirePermission('accounting:create')
   @Delete('revenue/:id')
-  deleteRevenue(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.deleteRevenue(id);
+  deleteRevenue(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
+    return this.svc.deleteRevenue(id, user.id);
   }
-
-  // ─── Cost ─────────────────────────────────────────────────────────────────
 
   @RequirePermission('accounting:create')
   @Post('cost')
@@ -82,9 +86,19 @@ export class AccountingController {
     return this.svc.findCost(filter);
   }
 
+  @Get('cost/chart')
+  costChart(@Query() filter: EntryFilterDto) {
+    return this.svc.getCostChart(filter);
+  }
+
   @Get('cost/job/:jobId')
   costByJob(@Param('jobId', ParseIntPipe) jobId: number) {
     return this.svc.findCostByJob(jobId);
+  }
+
+  @Get('cost/:id')
+  costDetail(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.findCostOne(id);
   }
 
   @RequirePermission('accounting:create')
@@ -121,11 +135,9 @@ export class AccountingController {
 
   @RequirePermission('accounting:create')
   @Delete('cost/:id')
-  deleteCost(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.deleteCost(id);
+  deleteCost(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
+    return this.svc.deleteCost(id, user.id);
   }
-
-  // ─── Post all + Profit ────────────────────────────────────────────────────
 
   @RequirePermission('accounting:post')
   @Post('post-all/job/:jobId')
@@ -138,7 +150,17 @@ export class AccountingController {
     return this.svc.getProfitSummary(jobId);
   }
 
-  // ─── Period Lock (admin only) ─────────────────────────────────────────────
+  @RequirePermission('accounting:create')
+  @Post('payments/receipts')
+  recordReceipt(@Body() dto: RecordPaymentDto, @CurrentUser() user: { id: number }) {
+    return this.svc.recordRevenueReceipt(dto, user.id);
+  }
+
+  @RequirePermission('accounting:create')
+  @Post('payments/vendor')
+  recordVendorPayment(@Body() dto: RecordPaymentDto, @CurrentUser() user: { id: number }) {
+    return this.svc.recordVendorPayment(dto, user.id);
+  }
 
   @RequirePermission('accounting:post')
   @Get('periods')

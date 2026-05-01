@@ -1,4 +1,4 @@
-﻿import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuditLog } from '../../models/audit-log.entity';
@@ -19,7 +19,6 @@ export interface AuditLogFilter {
 export class AuditLogsService {
   constructor(@InjectRepository(AuditLog) private repo: Repository<AuditLog>) {}
 
-  /** Paginated, filterable audit log query */
   async findAll(filter: AuditLogFilter = {}) {
     const { page = 1, limit = 50, entityName, entityId, userId, action, dateFrom, dateTo } = filter;
     const qb = this.repo.createQueryBuilder('a');
@@ -31,6 +30,12 @@ export class AuditLogsService {
     if (dateTo) qb.andWhere('a.createdAt <= :dateTo', { dateTo });
     qb.orderBy('a.createdAt', 'DESC').skip(getSkip(page, limit)).take(limit);
     return paginate(await qb.getManyAndCount(), page, limit);
+  }
+
+  async findOne(id: number) {
+    const log = await this.repo.findOne({ where: { id } });
+    if (!log) throw new NotFoundException('Audit log not found');
+    return log;
   }
 
   findByEntity(entityName: string, entityId: number) {

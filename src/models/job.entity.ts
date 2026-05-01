@@ -57,6 +57,27 @@ export class Job extends BaseEntity {
   @Column({ name: 'assigned_user_id', nullable: true })
   assignedUserId: number;
 
+  @Column({ name: 'agent_id', nullable: true })
+  agentId: number;
+
+  @Column({ length: 255, nullable: true })
+  shipper: string;
+
+  @Column({ length: 255, nullable: true })
+  consignee: string;
+
+  @Column({ name: 'declaration_no', length: 100, nullable: true })
+  declarationNo: string;
+
+  @Column({ name: 'business_type', length: 100, nullable: true })
+  businessType: string;
+
+  @Column({ name: 'customs_lane', length: 50, nullable: true })
+  customsLane: string;
+
+  @Column({ name: 'cargo_type', length: 50, nullable: true })
+  cargoType: string;
+
   // ─── Shipment / Transport detail fields ─────────────────────────────────
   @Column({ name: 'booking_ref', length: 100, nullable: true })
   bookingRef: string;
@@ -93,6 +114,9 @@ export class Job extends BaseEntity {
   @Column({ name: 'ata', type: 'date', nullable: true })
   ata: Date;
 
+  @Column({ name: 'actual_delivery_date', type: 'date', nullable: true })
+  actualDeliveryDate: Date;
+
   @Column({ name: 'pol', length: 100, nullable: true })
   pol: string; // Port of Loading
 
@@ -120,4 +144,10 @@ export class Job extends BaseEntity {
 
   @Column({ name: 'closed_by', nullable: true })
   closedBy: number;
+
+  @Column({ name: 'archived_at', type: 'datetime', nullable: true })
+  archivedAt: Date;
+
+  @Column({ name: 'archived_by', nullable: true })
+  archivedBy: number;
 }
