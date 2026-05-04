@@ -39,14 +39,6 @@ desktop.ini
 *.suo
 *.user
 
-# ─── BMAD — toàn bộ folder AI tooling (không commit) ────────────────────────
-_bmad/
-_bmad-output/
-
-# ─── AI Agent workspaces ──────────────────────────────────────────────────────
-.agents/
-.claude/
-
 # ─── Misc ─────────────────────────────────────────────────────────────────────
 *.bak
 *.tmp
