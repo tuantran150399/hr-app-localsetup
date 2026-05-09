@@ -378,21 +378,6 @@ async function seedOptionalPhase2(db: Db, customerId: number, vendorId: number, 
     );
   }
 
-  if (await tableExists(db, 'attachments')) {
-    await query(db, 'DELETE FROM attachments WHERE module_name = ? AND entity_id = ? AND original_name = ?', [
-      'Job',
-      jobId,
-      'api-test-note.txt',
-    ]);
-    await query(
-      db,
-      `INSERT INTO attachments
-         (module_name, entity_id, original_name, file_name, file_path, mime_type, file_size,
-          uploaded_by, created_by, updated_by, created_at, updated_at)
-       VALUES ('Job', ?, 'api-test-note.txt', 'api-test-note.txt', ?, 'text/plain', 23, 1, 1, 1, ?, ?)`,
-      [jobId, `Job/${jobId}/api-test-note.txt`, now(), now()],
-    );
-  }
 }
 
 async function main() {
@@ -420,8 +405,6 @@ async function main() {
       ['accounting:create', 'Create and edit accounting entries'],
       ['accounting:post', 'Post accounting entries'],
       ['auditlog:view', 'View audit logs'],
-      ['attachment:upload', 'Upload attachments'],
-      ['attachment:delete', 'Delete attachments'],
       ['report:view', 'View reports'],
     ];
     for (const [name, description] of permissions) await upsertPermission(db, name, description);
@@ -431,7 +414,7 @@ async function main() {
     await upsertRole(db, 'OPERATION', 'Operations and jobs access');
     await grantRolePermissions(db, 'SUPER_ADMIN', permissions.map(([name]) => name));
     await grantRolePermissions(db, 'ACCOUNTANT', ['accounting:view', 'accounting:create', 'accounting:post', 'auditlog:view', 'report:view']);
-    await grantRolePermissions(db, 'OPERATION', ['partner:manage', 'job:create', 'job:edit', 'job:close', 'attachment:upload']);
+    await grantRolePermissions(db, 'OPERATION', ['partner:manage', 'job:create', 'job:edit', 'job:close']);
 
     const branchId = await upsertBranch(db, 'API-HCM', 'API Test HCM Branch');
     const customerId = await upsertPartner(db, 'API-CUST-01', 'API Test Customer', 'CUSTOMER');

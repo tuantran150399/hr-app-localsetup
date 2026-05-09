@@ -61,7 +61,6 @@ async function main() {
     'partner:manage',
     'branch:manage',
     'auditlog:view',
-    'attachment:upload','attachment:delete',
     'report:view',
   ];
   for (const name of permissions) {
@@ -84,7 +83,7 @@ async function main() {
   `);
 
   // ACCOUNTANT permissions
-  const accountantPerms = ['job:view','accounting:create','accounting:post','accounting:view','auditlog:view','report:view','attachment:upload'];
+  const accountantPerms = ['job:view','accounting:create','accounting:post','accounting:view','auditlog:view','report:view'];
   for (const perm of accountantPerms) {
     await q.query(`
       INSERT IGNORE INTO role_permissions (role_id, permission_id)
@@ -94,7 +93,7 @@ async function main() {
   }
 
   // OPERATION permissions
-  const operationPerms = ['job:create','job:edit','job:view','job:close','partner:manage','attachment:upload'];
+  const operationPerms = ['job:create','job:edit','job:view','job:close','partner:manage'];
   for (const perm of operationPerms) {
     await q.query(`
       INSERT IGNORE INTO role_permissions (role_id, permission_id)

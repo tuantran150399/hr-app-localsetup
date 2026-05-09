@@ -14,6 +14,7 @@ import { AccountingPeriod } from '../../models/accounting-period.entity';
 import { CreateEntryDto, UpdateEntryDto, EntryFilterDto, UpdatePaymentStatusDto, LockPeriodDto, RecordPaymentDto } from './dto/entry.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
+import { parseWorkbookRows, pickCell, toDateString, toNumber } from '../../common/utils/excel.util';
 
 @Injectable()
 export class AccountingService {
@@ -224,6 +225,39 @@ export class AccountingService {
       newValues: { jobId: entry.jobId, vendorId: entry.vendorId, localAmount: entry.localAmount, status: entry.status },
     });
     return entry;
+  }
+
+  async importCostEntries(fileBuffer: Buffer, actorId: number) {
+    const rows = await parseWorkbookRows(fileBuffer);
+    if (!rows.length) {
+      throw new BadRequestException('The uploaded file does not contain any data rows');
+    }
+
+    const summary = {
+      totalRows: rows.length,
+      createdCount: 0,
+      errorCount: 0,
+      errors: [] as string[],
+    };
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const rowNumber = index + 2;
+
+      try {
+        const dto = await this.mapImportedCostRow(row);
+        await this.createCost(dto, actorId);
+        summary.createdCount += 1;
+      } catch (error) {
+        summary.errorCount += 1;
+        summary.errors.push(`Row ${rowNumber}: ${error instanceof Error ? error.message : 'Import failed'}`);
+      }
+    }
+
+    return {
+      message: 'Cost import completed',
+      ...summary,
+    };
   }
 
   async findCost(filter: EntryFilterDto) {
@@ -514,5 +548,72 @@ export class AccountingService {
     const saved = await this.periodRepo.save(period);
     await this.auditLogs.log({ entityName: 'AccountingPeriod', entityId: saved.id, action: 'UNLOCK', userId: actorId, newValues: { year: saved.year, month: saved.month } });
     return saved;
+  }
+
+  private async mapImportedCostRow(row: Record<string, unknown>): Promise<CreateEntryDto> {
+    const jobId = await this.resolveJobId(row);
+    const vendorId = await this.resolveVendorId(row);
+    const description = this.readString(row, 'description', 'costName', 'cost_name');
+    const amount = toNumber(pickCell(row, 'amount'));
+    const exchangeRate = toNumber(pickCell(row, 'exchangeRate', 'exchange_rate')) ?? 1;
+    const localAmount = toNumber(pickCell(row, 'localAmount', 'local_amount')) ?? ((amount ?? 0) * exchangeRate);
+
+    if (!jobId) throw new BadRequestException('jobId or jobCode is required');
+    if (!description) throw new BadRequestException('description is required');
+    if (!amount && amount !== 0) throw new BadRequestException('amount is required');
+    if (!localAmount && localAmount !== 0) throw new BadRequestException('localAmount is required');
+
+    return {
+      jobId,
+      vendorId,
+      description,
+      currency: this.readString(row, 'currency') ?? 'VND',
+      amount,
+      exchangeRate,
+      localAmount,
+      refNumber: this.readString(row, 'refNumber', 'ref_number'),
+      invoiceNumber: this.readString(row, 'invoiceNumber', 'invoice_number'),
+      docDate: toDateString(pickCell(row, 'docDate', 'doc_date', 'date')),
+      dueDate: toDateString(pickCell(row, 'dueDate', 'due_date')),
+      notes: this.readString(row, 'notes'),
+    };
+  }
+
+  private async resolveJobId(row: Record<string, unknown>): Promise<number | undefined> {
+    const directId = toNumber(pickCell(row, 'jobId', 'job_id'));
+    if (directId) {
+      await this.assertJobExists(directId);
+      return directId;
+    }
+
+    const jobCode = this.readString(row, 'jobCode', 'job_code', 'jobNo', 'job_no');
+    if (!jobCode) return undefined;
+
+    const job = await this.jobRepo.findOne({ where: { jobCode } });
+    if (!job || job.archivedAt) throw new BadRequestException(`Job code "${jobCode}" not found`);
+    return job.id;
+  }
+
+  private async resolveVendorId(row: Record<string, unknown>): Promise<number | undefined> {
+    const directId = toNumber(pickCell(row, 'vendorId', 'vendor_id'));
+    if (directId) {
+      await this.assertVendorExists(directId);
+      return directId;
+    }
+
+    const vendorCode = this.readString(row, 'vendorCode', 'vendor_code', 'partnerCode', 'partner_code');
+    if (!vendorCode) return undefined;
+
+    const vendor = await this.partnerRepo.findOne({ where: { code: vendorCode, isActive: true } });
+    if (!vendor || ![PartnerType.VENDOR, PartnerType.BOTH].includes(vendor.partnerType)) {
+      throw new BadRequestException(`Vendor code "${vendorCode}" not found`);
+    }
+    return vendor.id;
+  }
+
+  private readString(row: Record<string, unknown>, ...aliases: string[]): string | undefined {
+    const value = pickCell(row, ...aliases);
+    const normalized = String(value ?? '').trim();
+    return normalized ? normalized : undefined;
   }
 }

@@ -212,16 +212,6 @@ All paths below are under `/api/v1`.
 | `GET` | `/reports/overdue-receivables` | `accounting:view` | Overdue receivables |
 | `GET` | `/reports/overdue-payables` | `accounting:view` | Overdue payables |
 
-### Attachments
-
-| Method | Path | Auth | Notes |
-|---|---|---|---|
-| `POST` | `/attachments/upload` | JWT/permission | Upload file |
-| `GET` | `/attachments` | JWT | List attachments |
-| `GET` | `/attachments/:id` | JWT | Attachment metadata |
-| `GET` | `/attachments/:id/download` | JWT | Download file |
-| `DELETE` | `/attachments/:id` | JWT/permission | Delete attachment |
-
 ### Audit Logs
 
 | Method | Path | Auth | Notes |
@@ -334,7 +324,6 @@ Known follow-up items:
 - Verify every write endpoint in Swagger against prod data with JWT enabled.
 - Confirm Plesk Node process restarts cleanly after zip replacement.
 - Confirm frontend pages show backend seed data after static zip deployment.
-- Review attachment authorization against final business rules.
 - Review branch-level data isolation for jobs, accounting, and reports.
 - Review payment workflow roles if production roles differ from seeded test permissions.
 - Run a real audit-log check after create/update/post/void/delete flows.

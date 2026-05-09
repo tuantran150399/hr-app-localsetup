@@ -10,11 +10,14 @@ import { JobsModule } from './business/jobs/jobs.module';
 import { AccountingModule } from './business/accounting/accounting.module';
 import { AuditLogsModule } from './business/audit-logs/audit-logs.module';
 import { HealthModule } from './business/health/health.module';
-import { AttachmentsModule } from './business/attachments/attachments.module';
 import { ReportsModule } from './business/reports/reports.module';
 import { DashboardModule } from './business/dashboard/dashboard.module';
 import { PaymentRequestsModule } from './business/payment-requests/payment-requests.module';
 import { DebtPoliciesModule } from './business/debt-policies/debt-policies.module';
+import { PricingModule } from './business/pricing/pricing.module';
+import { HrModule } from './business/hr/hr.module';
+import { AdvancesModule } from './business/advances/advances.module';
+import { TreasuryModule } from './business/treasury/treasury.module';
 import { getEnvFilePath } from './config/env-file-path';
 
 @Module({
@@ -33,11 +36,14 @@ import { getEnvFilePath } from './config/env-file-path';
     AccountingModule,
     AuditLogsModule,
     HealthModule,
-    AttachmentsModule,
     ReportsModule,
     DashboardModule,
     PaymentRequestsModule,
     DebtPoliciesModule,
+    PricingModule,
+    HrModule,
+    AdvancesModule,
+    TreasuryModule,
   ],
 })
 export class AppModule {}

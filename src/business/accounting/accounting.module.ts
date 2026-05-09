@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { MulterModule } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { AccountingController } from './accounting.controller';
 import { AccountingService } from './accounting.service';
 import { RevenueEntry } from '../../models/revenue-entry.entity';
@@ -10,7 +12,11 @@ import { AccountingPeriod } from '../../models/accounting-period.entity';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([RevenueEntry, CostEntry, Job, Partner, AccountingPeriod]), AuditLogsModule],
+  imports: [
+    TypeOrmModule.forFeature([RevenueEntry, CostEntry, Job, Partner, AccountingPeriod]),
+    AuditLogsModule,
+    MulterModule.register({ storage: memoryStorage() }),
+  ],
   controllers: [AccountingController],
   providers: [AccountingService],
   exports: [AccountingService],

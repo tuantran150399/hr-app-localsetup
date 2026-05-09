@@ -1,4 +1,5 @@
-import { Controller, Get, Param, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Query, Res, UseGuards } from '@nestjs/common';
+import { Response } from 'express';
 import { ReportsService } from './reports.service';
 import { ReportFilterDto } from './dto/report-filter.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -41,6 +42,19 @@ export class ReportsController {
   @Get('cash-flow')
   cashFlow(@Query() filter: ReportFilterDto) {
     return this.svc.cashFlow(filter);
+  }
+
+  @RequirePermission('accounting:view')
+  @Get(':reportKey/export')
+  async exportReport(
+    @Param('reportKey') reportKey: string,
+    @Query() filter: ReportFilterDto,
+    @Res() res: Response,
+  ) {
+    const exported = await this.svc.exportReport(reportKey, filter);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${exported.fileName}"`);
+    res.send(exported.buffer);
   }
 
   /** Open vs closed job counts by status */

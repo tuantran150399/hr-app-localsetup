@@ -1,10 +1,13 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post, Patch, Delete, Param, ParseIntPipe, UploadedFile, UseGuards, Query, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AccountingService } from './accounting.service';
 import { CreateEntryDto, UpdateEntryDto, EntryFilterDto, UpdatePaymentStatusDto, VoidEntryDto, LockPeriodDto, RecordPaymentDto } from './dto/entry.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+
+const MAX_IMPORT_FILE_SIZE = 10 * 1024 * 1024;
 
 @UseGuards(JwtAuthGuard, PermissionGuard)
 @Controller('accounting')
@@ -79,6 +82,15 @@ export class AccountingController {
   @Post('cost')
   createCost(@Body() dto: CreateEntryDto, @CurrentUser() user: { id: number }) {
     return this.svc.createCost(dto, user.id);
+  }
+
+  @RequirePermission('accounting:create')
+  @Post('cost/import')
+  @UseInterceptors(FileInterceptor('file'))
+  importCost(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: { id: number }) {
+    if (!file) throw new BadRequestException('No file uploaded');
+    if (file.size > MAX_IMPORT_FILE_SIZE) throw new BadRequestException('File exceeds 10 MB limit');
+    return this.svc.importCostEntries(file.buffer, user.id);
   }
 
   @Get('cost')

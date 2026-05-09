@@ -20,6 +20,12 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  logout() {
+    return { message: 'Logged out successfully' };
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get('me')
   getMe(@CurrentUser() user: { id: number }) {
     return this.authService.getMe(user.id);

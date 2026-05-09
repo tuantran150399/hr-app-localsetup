@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Job, JobStatus } from '../../models/job.entity';
@@ -6,6 +6,7 @@ import { RevenueEntry, AccountingStatus, PaymentStatus } from '../../models/reve
 import { CostEntry } from '../../models/cost-entry.entity';
 import { Partner } from '../../models/partner.entity';
 import { ReportFilterDto } from './dto/report-filter.dto';
+import { buildWorkbookBuffer } from '../../common/utils/excel.util';
 
 @Injectable()
 export class ReportsService {
@@ -161,6 +162,20 @@ export class ReportsService {
       map.set(row.period, existing);
     }
     return { data: [...map.values()].sort((a, b) => a.period.localeCompare(b.period)) };
+  }
+
+  async exportReport(reportKey: string, filter: ReportFilterDto) {
+    const result = await this.getReportData(reportKey, filter);
+    const rows = Array.isArray((result as { data?: unknown[] }).data)
+      ? (result as { data: Record<string, unknown>[] }).data
+      : Array.isArray(result)
+        ? result as Record<string, unknown>[]
+        : [result as Record<string, unknown>];
+
+    return {
+      fileName: `${reportKey}-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      buffer: await buildWorkbookBuffer(this.sheetNameFor(reportKey), rows),
+    };
   }
 
   private async periodSum(
@@ -340,5 +355,38 @@ export class ReportsService {
     const rows = await qb.getMany();
     const total = rows.reduce((s, c) => s + Number(c.localAmount), 0);
     return { count: rows.length, totalAmount: total, data: rows };
+  }
+
+  private async getReportData(reportKey: string, filter: ReportFilterDto) {
+    switch (reportKey) {
+      case 'branch-summary':
+        return this.revenueByBranch(filter);
+      case 'customer-summary':
+        return this.revenueByCustomer(filter);
+      case 'job-status-summary':
+        return this.jobStatusSummary(filter);
+      case 'receivables':
+        return this.receivableSummary(filter);
+      case 'payables':
+        return this.payableSummary(filter);
+      case 'overdue-receivables':
+        return this.overdueReceivables(filter);
+      case 'overdue-payables':
+        return this.overduePayables(filter);
+      case 'pnl':
+        return this.pnlByPeriod(filter);
+      case 'cash-flow':
+        return this.cashFlow(filter);
+      default:
+        throw new BadRequestException(`Unsupported report export "${reportKey}"`);
+    }
+  }
+
+  private sheetNameFor(reportKey: string) {
+    return reportKey
+      .split('-')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ')
+      .slice(0, 31);
   }
 }
