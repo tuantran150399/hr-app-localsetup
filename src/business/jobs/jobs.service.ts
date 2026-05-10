@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Job, JobStatus } from '../../models/job.entity';
@@ -11,6 +11,7 @@ import { DebtPolicy } from '../../models/debt-policy.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CreateJobDto, UpdateJobDto, JobFilterDto, CreateMilestoneDto, UpdateMilestoneDto } from './dto/job.dto';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
+import { assertBranchAccess, AuthenticatedUser, getScopedBranchId } from '../../common/auth/branch-scope.util';
 
 @Injectable()
 export class JobsService {
@@ -24,6 +25,14 @@ export class JobsService {
     @InjectRepository(DebtPolicy) private debtPolicyRepo: Repository<DebtPolicy>,
     private auditLogs: AuditLogsService,
   ) {}
+
+  private enforceBranchAccess(user: AuthenticatedUser | undefined, branchId?: number | null) {
+    try {
+      assertBranchAccess(user, branchId);
+    } catch {
+      throw new ForbiddenException('You cannot access data from another branch');
+    }
+  }
 
   private async validateRefs(dto: { partnerId?: number; branchId?: number; assignedUserId?: number; agentId?: number }) {
     if (dto.partnerId) {
@@ -45,7 +54,8 @@ export class JobsService {
     }
   }
 
-  async create(dto: CreateJobDto, actorId: number) {
+  async create(dto: CreateJobDto, actorId: number, actor?: AuthenticatedUser) {
+    this.enforceBranchAccess(actor, dto.branchId);
     const exists = await this.repo.findOne({ where: { jobCode: dto.jobCode } });
     if (exists) throw new ConflictException('Job code already exists');
     await this.validateRefs(dto);
@@ -53,7 +63,7 @@ export class JobsService {
     const job = await this.repo.save(
       this.repo.create({ ...dto, status: JobStatus.DRAFT, createdBy: actorId, updatedBy: actorId }),
     );
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'Job',
       entityId: job.id,
       action: 'CREATE',
@@ -63,10 +73,11 @@ export class JobsService {
     return job;
   }
 
-  async copy(sourceId: number, dto: CreateJobDto, actorId: number) {
-    const source = await this.findOne(sourceId);
+  async copy(sourceId: number, dto: CreateJobDto, actorId: number, actor?: AuthenticatedUser) {
+    const source = await this.findOne(sourceId, actor);
     const exists = await this.repo.findOne({ where: { jobCode: dto.jobCode } });
     if (exists) throw new ConflictException('Job code already exists');
+    this.enforceBranchAccess(actor, dto.branchId ?? source.branchId);
     await this.validateRefs({ ...source, ...dto });
     await this.assertDebtPolicyAllowsJob(dto.partnerId ?? source.partnerId);
 
@@ -84,7 +95,7 @@ export class JobsService {
         updatedBy: actorId,
       }),
     );
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'Job',
       entityId: job.id,
       action: 'COPY',
@@ -94,7 +105,7 @@ export class JobsService {
     return job;
   }
 
-  async findAll(filter: JobFilterDto) {
+  async findAll(filter: JobFilterDto, actor?: AuthenticatedUser) {
     const {
       page = 1,
       limit = 20,
@@ -136,7 +147,8 @@ export class JobsService {
       );
     }
     if (status) qb.andWhere('j.status = :status', { status });
-    if (branchId) qb.andWhere('j.branchId = :branchId', { branchId });
+    const scopedBranchId = getScopedBranchId(actor, branchId);
+    if (scopedBranchId) qb.andWhere('j.branchId = :branchId', { branchId: scopedBranchId });
     if (partnerId) qb.andWhere('j.partnerId = :partnerId', { partnerId });
     if (assignedUserId) qb.andWhere('j.assignedUserId = :assignedUserId', { assignedUserId });
     if (jobType) qb.andWhere('j.jobType = :jobType', { jobType });
@@ -150,21 +162,23 @@ export class JobsService {
     return paginate(await qb.getManyAndCount(), page, limit);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, actor?: AuthenticatedUser) {
     const job = await this.repo.findOne({ where: { id } });
     if (!job || job.archivedAt) throw new NotFoundException('Job not found');
+    this.enforceBranchAccess(actor, job.branchId);
     return job;
   }
 
-  async update(id: number, dto: UpdateJobDto, actorId: number) {
-    const job = await this.findOne(id);
+  async update(id: number, dto: UpdateJobDto, actorId: number, actor?: AuthenticatedUser) {
+    const job = await this.findOne(id, actor);
     if (job.status === JobStatus.CLOSED || job.status === JobStatus.CANCELLED) {
       throw new BadRequestException('Cannot edit a CLOSED or CANCELLED job');
     }
+    this.enforceBranchAccess(actor, dto.branchId ?? job.branchId);
     await this.validateRefs(dto);
     const oldValues = { jobCode: job.jobCode, partnerId: job.partnerId, branchId: job.branchId, status: job.status };
     const updated = await this.repo.save({ ...job, ...dto, updatedBy: actorId });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'Job',
       entityId: id,
       action: 'UPDATE',
@@ -175,10 +189,10 @@ export class JobsService {
     return updated;
   }
 
-  async archive(id: number, actorId: number) {
-    const job = await this.findOne(id);
+  async archive(id: number, actorId: number, actor?: AuthenticatedUser) {
+    const job = await this.findOne(id, actor);
     const updated = await this.repo.save({ ...job, archivedAt: new Date(), archivedBy: actorId, updatedBy: actorId });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'Job',
       entityId: id,
       action: 'ARCHIVE',
@@ -189,8 +203,8 @@ export class JobsService {
     return { message: 'Job archived' };
   }
 
-  async updateStatus(id: number, status: JobStatus, actorId: number) {
-    const job = await this.findOne(id);
+  async updateStatus(id: number, status: JobStatus, actorId: number, actor?: AuthenticatedUser) {
+    const job = await this.findOne(id, actor);
     if (job.status === JobStatus.CLOSED || job.status === JobStatus.CANCELLED) {
       throw new BadRequestException('Job is already finalized');
     }
@@ -201,7 +215,7 @@ export class JobsService {
       update.closedBy = actorId;
     }
     const updated = await this.repo.save({ ...job, ...update });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'Job',
       entityId: id,
       action: 'STATUS_CHANGE',
@@ -212,17 +226,17 @@ export class JobsService {
     return updated;
   }
 
-  async getMilestones(jobId: number) {
-    await this.findOne(jobId);
+  async getMilestones(jobId: number, actor?: AuthenticatedUser) {
+    await this.findOne(jobId, actor);
     return this.milestoneRepo.find({ where: { jobId }, order: { sortOrder: 'ASC', createdAt: 'ASC' } });
   }
 
-  async addMilestone(jobId: number, dto: CreateMilestoneDto, actorId: number) {
-    await this.findOne(jobId);
+  async addMilestone(jobId: number, dto: CreateMilestoneDto, actorId: number, actor?: AuthenticatedUser) {
+    await this.findOne(jobId, actor);
     const milestone = await this.milestoneRepo.save(
       this.milestoneRepo.create({ ...dto, jobId, createdBy: actorId, updatedBy: actorId }),
     );
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'JobMilestone',
       entityId: milestone.id,
       action: 'CREATE',
@@ -232,11 +246,12 @@ export class JobsService {
     return milestone;
   }
 
-  async updateMilestone(jobId: number, milestoneId: number, dto: UpdateMilestoneDto, actorId: number) {
+  async updateMilestone(jobId: number, milestoneId: number, dto: UpdateMilestoneDto, actorId: number, actor?: AuthenticatedUser) {
+    await this.findOne(jobId, actor);
     const milestone = await this.milestoneRepo.findOne({ where: { id: milestoneId, jobId } });
     if (!milestone) throw new NotFoundException('Milestone not found');
     const updated = await this.milestoneRepo.save({ ...milestone, ...dto, updatedBy: actorId });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'JobMilestone',
       entityId: milestoneId,
       action: 'UPDATE',
@@ -247,11 +262,12 @@ export class JobsService {
     return updated;
   }
 
-  async deleteMilestone(jobId: number, milestoneId: number, actorId: number) {
+  async deleteMilestone(jobId: number, milestoneId: number, actorId: number, actor?: AuthenticatedUser) {
+    await this.findOne(jobId, actor);
     const milestone = await this.milestoneRepo.findOne({ where: { id: milestoneId, jobId } });
     if (!milestone) throw new NotFoundException('Milestone not found');
     await this.milestoneRepo.remove(milestone);
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'JobMilestone',
       entityId: milestoneId,
       action: 'DELETE',

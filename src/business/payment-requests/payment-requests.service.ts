@@ -30,7 +30,7 @@ export class PaymentRequestsService {
         updatedBy: actorId,
       }),
     );
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'PaymentRequest',
       entityId: request.id,
       action: 'CREATE',
@@ -67,7 +67,7 @@ export class PaymentRequestsService {
         departmentApprovedBy: actorId,
       };
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'PaymentRequest',
       entityId: id,
       action: 'DEPARTMENT_APPROVE',
@@ -88,7 +88,7 @@ export class PaymentRequestsService {
         finalApprovedBy: actorId,
       };
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'PaymentRequest',
       entityId: id,
       action: 'FINAL_APPROVE',
@@ -110,7 +110,7 @@ export class PaymentRequestsService {
         rejectReason: reason,
       };
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'PaymentRequest',
       entityId: id,
       action: 'REJECT',

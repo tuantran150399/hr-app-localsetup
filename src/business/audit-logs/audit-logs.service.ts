@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuditLog } from '../../models/audit-log.entity';
@@ -17,6 +17,8 @@ export interface AuditLogFilter {
 
 @Injectable()
 export class AuditLogsService {
+  private readonly logger = new Logger(AuditLogsService.name);
+
   constructor(@InjectRepository(AuditLog) private repo: Repository<AuditLog>) {}
 
   async findAll(filter: AuditLogFilter = {}) {
@@ -42,7 +44,22 @@ export class AuditLogsService {
     return this.repo.find({ where: { entityName, entityId }, order: { createdAt: 'DESC' } });
   }
 
+  /**
+   * Synchronous log — awaited by callers that need the record immediately.
+   */
   log(data: Partial<AuditLog>) {
     return this.repo.save(this.repo.create(data));
   }
+
+  /**
+   * Fire-and-forget audit log — does NOT block the HTTP response.
+   * Use this for all write operations (create/update/delete/post/void)
+   * where the client doesn't need to wait for the audit record.
+   */
+  logAsync(data: Partial<AuditLog>): void {
+    this.repo.save(this.repo.create(data)).catch((err) =>
+      this.logger.error(`Audit log write failed: ${err?.message}`, err?.stack),
+    );
+  }
 }
+

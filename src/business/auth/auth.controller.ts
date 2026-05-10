@@ -1,4 +1,5 @@
-﻿import { Controller, Post, Body, Get, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -10,8 +11,13 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(@Body() dto: LoginDto, @Req() req: Request) {
+    return this.authService.login(dto, {
+      ipAddress: this.getClientIp(req),
+      userAgent: this.getHeader(req, 'user-agent'),
+      countryCode: this.getHeader(req, 'cf-ipcountry') || this.getHeader(req, 'x-country-code'),
+      locationLabel: this.getHeader(req, 'x-location-label'),
+    });
   }
 
   @Post('refresh')
@@ -29,5 +35,15 @@ export class AuthController {
   @Get('me')
   getMe(@CurrentUser() user: { id: number }) {
     return this.authService.getMe(user.id);
+  }
+
+  private getClientIp(req: Request) {
+    const forwardedFor = this.getHeader(req, 'x-forwarded-for');
+    return forwardedFor || req.socket.remoteAddress || req.ip;
+  }
+
+  private getHeader(req: Request, name: string) {
+    const value = req.headers[name];
+    return Array.isArray(value) ? value[0] : value;
   }
 }

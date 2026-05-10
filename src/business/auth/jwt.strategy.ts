@@ -11,6 +11,7 @@ export interface JwtPayload {
   username: string;
   roles: string[];
   permissions: string[];
+  branchId?: number | null;
 }
 
 @Injectable()
@@ -30,6 +31,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload) {
     const user = await this.userRepo.findOne({ where: { id: payload.sub, isActive: true } });
     if (!user) throw new UnauthorizedException();
-    return { id: user.id, username: user.username, roles: payload.roles, permissions: payload.permissions };
+    return {
+      id: user.id,
+      username: user.username,
+      branchId: user.branchId,
+      roles: payload.roles,
+      permissions: payload.permissions,
+    };
   }
 }

@@ -38,7 +38,7 @@ export class UsersService {
       user.roles = await this.roleRepo.findByIds(dto.roleIds);
     }
     const saved = await this.userRepo.save(user);
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'User', entityId: saved.id, action: 'CREATE', userId: actorId,
       newValues: { username: saved.username, email: saved.email },
     });
@@ -64,7 +64,7 @@ export class UsersService {
       user.roles = dto.roleIds.length ? await this.roleRepo.findByIds(dto.roleIds) : [];
     }
     const saved = await this.userRepo.save(user);
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'User', entityId: id, action: 'UPDATE', userId: actorId,
       oldValues,
       newValues: { username: saved.username, email: saved.email, branchId: saved.branchId },
@@ -86,7 +86,7 @@ export class UsersService {
     const user = await this.findOne(id);
     user.isActive = false;
     await this.userRepo.save(user);
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'User', entityId: id, action: 'DEACTIVATE', userId: actorId,
       newValues: { isActive: false },
     });

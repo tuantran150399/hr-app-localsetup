@@ -1,4 +1,4 @@
-﻿import { Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { DatabaseModule } from './config/database.module';
 import { AuthModule } from './business/auth/auth.module';
@@ -18,6 +18,11 @@ import { PricingModule } from './business/pricing/pricing.module';
 import { HrModule } from './business/hr/hr.module';
 import { AdvancesModule } from './business/advances/advances.module';
 import { TreasuryModule } from './business/treasury/treasury.module';
+import { SecurityModule } from './business/security/security.module';
+import { DebitNotesModule } from './business/debit-notes/debit-notes.module';
+import { CobModule } from './business/cob/cob.module';
+import { NotificationsModule } from './business/notifications/notifications.module';
+import { AdjustmentsModule } from './business/adjustments/adjustments.module';
 import { getEnvFilePath } from './config/env-file-path';
 
 @Module({
@@ -44,6 +49,11 @@ import { getEnvFilePath } from './config/env-file-path';
     HrModule,
     AdvancesModule,
     TreasuryModule,
+    SecurityModule,
+    DebitNotesModule,
+    CobModule,
+    NotificationsModule,
+    AdjustmentsModule,
   ],
 })
 export class AppModule {}

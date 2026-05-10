@@ -17,7 +17,7 @@ export class PartnersService {
     const exists = await this.repo.findOne({ where: { code: dto.code } });
     if (exists) throw new ConflictException('Partner code already exists');
     const partner = await this.repo.save(this.repo.create({ ...dto, createdBy: actorId, updatedBy: actorId }));
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'Partner',
       entityId: partner.id,
       action: 'CREATE',
@@ -63,7 +63,7 @@ export class PartnersService {
   async update(id: number, dto: UpdatePartnerDto, actorId: number) {
     const p = await this.findOne(id);
     const updated = await this.repo.save({ ...p, ...dto, updatedBy: actorId });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'Partner',
       entityId: id,
       action: 'UPDATE',
@@ -77,7 +77,7 @@ export class PartnersService {
   async deactivate(id: number, actorId: number) {
     const p = await this.findOne(id);
     await this.repo.save({ ...p, isActive: false, updatedBy: actorId });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'Partner',
       entityId: id,
       action: 'DEACTIVATE',
@@ -91,7 +91,7 @@ export class PartnersService {
   async lock(id: number, actorId: number) {
     const p = await this.findOne(id);
     await this.repo.save({ ...p, isActive: false, updatedBy: actorId });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'Partner',
       entityId: id,
       action: 'LOCK',

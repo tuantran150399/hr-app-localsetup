@@ -20,7 +20,7 @@ export class TreasuryService {
     const exists = await this.accountRepo.findOne({ where: { code: dto.code } });
     if (exists) throw new ConflictException('Cash account code already exists');
     const account = await this.accountRepo.save(this.accountRepo.create({ ...dto, createdBy: actorId, updatedBy: actorId }));
-    await this.auditLogs.log({ entityName: 'CashAccount', entityId: account.id, action: 'CREATE', userId: actorId, newValues: account });
+    this.auditLogs.logAsync({ entityName: 'CashAccount', entityId: account.id, action: 'CREATE', userId: actorId, newValues: account });
     return account;
   }
 
@@ -43,7 +43,7 @@ export class TreasuryService {
   async updateAccount(id: number, dto: UpdateCashAccountDto, actorId: number) {
     const current = await this.findAccount(id);
     const updated = await this.accountRepo.save({ ...current, ...dto, updatedBy: actorId });
-    await this.auditLogs.log({ entityName: 'CashAccount', entityId: id, action: 'UPDATE', userId: actorId, oldValues: current, newValues: updated });
+    this.auditLogs.logAsync({ entityName: 'CashAccount', entityId: id, action: 'UPDATE', userId: actorId, oldValues: current, newValues: updated });
     return updated;
   }
 
@@ -58,7 +58,7 @@ export class TreasuryService {
       await em.save(CashAccount, { ...account, balance: nextBalance, updatedBy: actorId });
       return tx;
     });
-    await this.auditLogs.log({ entityName: 'CashTransaction', entityId: result.id, action: 'CREATE', userId: actorId, newValues: result });
+    this.auditLogs.logAsync({ entityName: 'CashTransaction', entityId: result.id, action: 'CREATE', userId: actorId, newValues: result });
     return result;
   }
 

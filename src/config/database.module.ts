@@ -23,7 +23,19 @@ import { join } from 'path';
         charset: 'utf8mb4',
         timezone: '+07:00',
         ssl: false,
-        extra: { ssl: false },
+        extra: {
+          ssl: false,
+          // Connection pool — critical for a remote DB on Plesk
+          connectionLimit: config.get<number>('DB_POOL_SIZE', 20),
+          acquireTimeout: 30000,
+          connectTimeout: 15000,
+          waitForConnections: true,
+          queueLimit: 0,
+        },
+        // TypeORM query-result cache (in-memory, 5 s TTL)
+        cache: {
+          duration: 5000,
+        },
       }),
     }),
   ],

@@ -19,7 +19,7 @@ export class PricingService {
   async create(dto: CreateServicePriceDto, actorId: number) {
     await this.assertPartner(dto.partnerId);
     const price = await this.repo.save(this.repo.create({ ...dto, createdBy: actorId, updatedBy: actorId }));
-    await this.auditLogs.log({ entityName: 'ServicePrice', entityId: price.id, action: 'CREATE', userId: actorId, newValues: price });
+    this.auditLogs.logAsync({ entityName: 'ServicePrice', entityId: price.id, action: 'CREATE', userId: actorId, newValues: price });
     return price;
   }
 
@@ -47,14 +47,14 @@ export class PricingService {
     const current = await this.findOne(id);
     await this.assertPartner(dto.partnerId);
     const updated = await this.repo.save({ ...current, ...dto, updatedBy: actorId });
-    await this.auditLogs.log({ entityName: 'ServicePrice', entityId: id, action: 'UPDATE', userId: actorId, oldValues: current, newValues: updated });
+    this.auditLogs.logAsync({ entityName: 'ServicePrice', entityId: id, action: 'UPDATE', userId: actorId, oldValues: current, newValues: updated });
     return updated;
   }
 
   async deactivate(id: number, actorId: number) {
     const current = await this.findOne(id);
     const updated = await this.repo.save({ ...current, isActive: false, updatedBy: actorId });
-    await this.auditLogs.log({ entityName: 'ServicePrice', entityId: id, action: 'DEACTIVATE', userId: actorId });
+    this.auditLogs.logAsync({ entityName: 'ServicePrice', entityId: id, action: 'DEACTIVATE', userId: actorId });
     return updated;
   }
 

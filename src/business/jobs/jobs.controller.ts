@@ -14,65 +14,65 @@ export class JobsController {
 
   @RequirePermission('job:create')
   @Post()
-  create(@Body() dto: CreateJobDto, @CurrentUser() user: { id: number }) {
-    return this.svc.create(dto, user.id);
+  create(@Body() dto: CreateJobDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.create(dto, user.id, user);
   }
 
   @Get()
-  findAll(@Query() filter: JobFilterDto) {
-    return this.svc.findAll(filter);
+  findAll(@Query() filter: JobFilterDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.findAll(filter, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.findOne(id, user);
   }
 
   @RequirePermission('job:edit')
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateJobDto, @CurrentUser() user: { id: number }) {
-    return this.svc.update(id, dto, user.id);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateJobDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.update(id, dto, user.id, user);
   }
 
   @RequirePermission('job:edit')
   @Put(':id')
-  replace(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateJobDto, @CurrentUser() user: { id: number }) {
-    return this.svc.update(id, dto, user.id);
+  replace(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateJobDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.update(id, dto, user.id, user);
   }
 
   @RequirePermission('job:create')
   @Post(':id/copy')
-  copy(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateJobDto, @CurrentUser() user: { id: number }) {
-    return this.svc.copy(id, dto, user.id);
+  copy(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateJobDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.copy(id, dto, user.id, user);
   }
 
   @RequirePermission('job:edit')
   @Delete(':id')
-  archive(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
-    return this.svc.archive(id, user.id);
+  archive(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.archive(id, user.id, user);
   }
 
   @RequirePermission('job:close')
   @Patch(':id/close')
-  close(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
-    return this.svc.updateStatus(id, JobStatus.CLOSED, user.id);
+  close(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.updateStatus(id, JobStatus.CLOSED, user.id, user);
   }
 
   @RequirePermission('job:edit')
   @Patch(':id/cancel')
-  cancel(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
-    return this.svc.updateStatus(id, JobStatus.CANCELLED, user.id);
+  cancel(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.updateStatus(id, JobStatus.CANCELLED, user.id, user);
   }
 
   @RequirePermission('job:edit')
   @Patch(':id/start')
-  start(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
-    return this.svc.updateStatus(id, JobStatus.IN_PROGRESS, user.id);
+  start(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.updateStatus(id, JobStatus.IN_PROGRESS, user.id, user);
   }
 
   @Get(':id/milestones')
-  getMilestones(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.getMilestones(id);
+  getMilestones(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.getMilestones(id, user);
   }
 
   @RequirePermission('job:edit')
@@ -80,9 +80,9 @@ export class JobsController {
   addMilestone(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateMilestoneDto,
-    @CurrentUser() user: { id: number },
+    @CurrentUser() user: { id: number; branchId?: number; roles?: string[] },
   ) {
-    return this.svc.addMilestone(id, dto, user.id);
+    return this.svc.addMilestone(id, dto, user.id, user);
   }
 
   @RequirePermission('job:edit')
@@ -91,9 +91,9 @@ export class JobsController {
     @Param('id', ParseIntPipe) id: number,
     @Param('milestoneId', ParseIntPipe) milestoneId: number,
     @Body() dto: UpdateMilestoneDto,
-    @CurrentUser() user: { id: number },
+    @CurrentUser() user: { id: number; branchId?: number; roles?: string[] },
   ) {
-    return this.svc.updateMilestone(id, milestoneId, dto, user.id);
+    return this.svc.updateMilestone(id, milestoneId, dto, user.id, user);
   }
 
   @RequirePermission('job:edit')
@@ -101,8 +101,8 @@ export class JobsController {
   deleteMilestone(
     @Param('id', ParseIntPipe) id: number,
     @Param('milestoneId', ParseIntPipe) milestoneId: number,
-    @CurrentUser() user: { id: number },
+    @CurrentUser() user: { id: number; branchId?: number; roles?: string[] },
   ) {
-    return this.svc.deleteMilestone(id, milestoneId, user.id);
+    return this.svc.deleteMilestone(id, milestoneId, user.id, user);
   }
 }

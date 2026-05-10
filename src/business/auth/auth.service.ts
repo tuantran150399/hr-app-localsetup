@@ -7,6 +7,7 @@ import * as bcrypt from 'bcrypt';
 import { User } from '../../models/user.entity';
 import { LoginDto } from './dto/login.dto';
 import { JwtPayload } from './jwt.strategy';
+import { LoginSecurityContext, SecurityService } from '../security/security.service';
 
 @Injectable()
 export class AuthService {
@@ -15,18 +16,28 @@ export class AuthService {
     private userRepo: Repository<User>,
     private jwtService: JwtService,
     private config: ConfigService,
+    private securityService: SecurityService,
   ) {}
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, securityContext: LoginSecurityContext = {}) {
+    await this.securityService.enforceIpAccess(securityContext, dto.username);
+
     const user = await this.userRepo.findOne({
       where: { username: dto.username, isActive: true },
       relations: ['roles', 'roles.permissions'],
     });
-    if (!user) throw new UnauthorizedException('Invalid credentials');
+    if (!user) {
+      await this.securityService.recordFailedLogin(dto.username, securityContext, 'Invalid credentials');
+      throw new UnauthorizedException('Invalid credentials');
+    }
     const valid = await bcrypt.compare(dto.password, user.password);
-    if (!valid) throw new UnauthorizedException('Invalid credentials');
+    if (!valid) {
+      await this.securityService.recordFailedLogin(dto.username, securityContext, 'Invalid credentials');
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
     const payload = this.buildPayload(user);
+    await this.securityService.recordSuccessfulLogin(user, securityContext);
     return {
       accessToken: this.signAccessToken(payload),
       refreshToken: this.signRefreshToken(payload),
@@ -90,6 +101,7 @@ export class AuthService {
     return {
       sub: user.id,
       username: user.username,
+      branchId: user.branchId,
       roles,
       permissions: Array.from(permissionSet),
     };

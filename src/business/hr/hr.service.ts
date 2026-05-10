@@ -39,7 +39,7 @@ export class HrService {
     const exists = await this.employeeRepo.findOne({ where: { employeeCode: dto.employeeCode } });
     if (exists) throw new ConflictException('Employee code already exists');
     const employee = await this.employeeRepo.save(this.employeeRepo.create({ ...dto, createdBy: actorId, updatedBy: actorId }));
-    await this.auditLogs.log({ entityName: 'Employee', entityId: employee.id, action: 'CREATE', userId: actorId, newValues: employee });
+    this.auditLogs.logAsync({ entityName: 'Employee', entityId: employee.id, action: 'CREATE', userId: actorId, newValues: employee });
     return employee;
   }
 
@@ -64,14 +64,14 @@ export class HrService {
     const current = await this.findEmployee(id);
     await this.assertRefs(dto.branchId, dto.userId);
     const updated = await this.employeeRepo.save({ ...current, ...dto, updatedBy: actorId });
-    await this.auditLogs.log({ entityName: 'Employee', entityId: id, action: 'UPDATE', userId: actorId, oldValues: current, newValues: updated });
+    this.auditLogs.logAsync({ entityName: 'Employee', entityId: id, action: 'UPDATE', userId: actorId, oldValues: current, newValues: updated });
     return updated;
   }
 
   async deactivateEmployee(id: number, actorId: number) {
     const current = await this.findEmployee(id);
     const updated = await this.employeeRepo.save({ ...current, status: EmployeeStatus.INACTIVE, updatedBy: actorId });
-    await this.auditLogs.log({ entityName: 'Employee', entityId: id, action: 'DEACTIVATE', userId: actorId });
+    this.auditLogs.logAsync({ entityName: 'Employee', entityId: id, action: 'DEACTIVATE', userId: actorId });
     return updated;
   }
 
@@ -84,7 +84,7 @@ export class HrService {
       createdBy: current?.createdBy ?? actorId,
       updatedBy: actorId,
     }));
-    await this.auditLogs.log({ entityName: 'AttendanceRecord', entityId: record.id, action: current ? 'UPDATE' : 'CREATE', userId: actorId, newValues: record });
+    this.auditLogs.logAsync({ entityName: 'AttendanceRecord', entityId: record.id, action: current ? 'UPDATE' : 'CREATE', userId: actorId, newValues: record });
     return record;
   }
 
@@ -102,7 +102,7 @@ export class HrService {
   async createLeave(dto: CreateLeaveRequestDto, actorId: number) {
     await this.assertEmployee(dto.employeeId);
     const leave = await this.leaveRepo.save(this.leaveRepo.create({ ...dto, status: LeaveStatus.PENDING, createdBy: actorId, updatedBy: actorId }));
-    await this.auditLogs.log({ entityName: 'LeaveRequest', entityId: leave.id, action: 'CREATE', userId: actorId, newValues: leave });
+    this.auditLogs.logAsync({ entityName: 'LeaveRequest', entityId: leave.id, action: 'CREATE', userId: actorId, newValues: leave });
     return leave;
   }
 
@@ -121,7 +121,7 @@ export class HrService {
     const leave = await this.findLeave(id);
     if (leave.status !== LeaveStatus.PENDING) throw new BadRequestException('Only pending leave requests can be approved');
     const updated = await this.leaveRepo.save({ ...leave, status: LeaveStatus.APPROVED, approvedAt: new Date(), approvedBy: actorId, updatedBy: actorId });
-    await this.auditLogs.log({ entityName: 'LeaveRequest', entityId: id, action: 'APPROVE', userId: actorId });
+    this.auditLogs.logAsync({ entityName: 'LeaveRequest', entityId: id, action: 'APPROVE', userId: actorId });
     return updated;
   }
 
@@ -129,7 +129,7 @@ export class HrService {
     const leave = await this.findLeave(id);
     if (leave.status !== LeaveStatus.PENDING) throw new BadRequestException('Only pending leave requests can be rejected');
     const updated = await this.leaveRepo.save({ ...leave, status: LeaveStatus.REJECTED, rejectedAt: new Date(), rejectedBy: actorId, rejectReason: dto.reason, updatedBy: actorId });
-    await this.auditLogs.log({ entityName: 'LeaveRequest', entityId: id, action: 'REJECT', userId: actorId, newValues: { reason: dto.reason } });
+    this.auditLogs.logAsync({ entityName: 'LeaveRequest', entityId: id, action: 'REJECT', userId: actorId, newValues: { reason: dto.reason } });
     return updated;
   }
 
@@ -149,7 +149,7 @@ export class HrService {
       createdBy: current?.createdBy ?? actorId,
       updatedBy: actorId,
     }));
-    await this.auditLogs.log({ entityName: 'PayrollRecord', entityId: record.id, action: current ? 'UPDATE' : 'CREATE', userId: actorId, newValues: record });
+    this.auditLogs.logAsync({ entityName: 'PayrollRecord', entityId: record.id, action: current ? 'UPDATE' : 'CREATE', userId: actorId, newValues: record });
     return record;
   }
 
@@ -170,7 +170,7 @@ export class HrService {
     if (record.status === PayrollStatus.POSTED) throw new BadRequestException('Payroll is already posted');
     if (record.status === PayrollStatus.VOIDED) throw new BadRequestException('Payroll is voided');
     const updated = await this.payrollRepo.save({ ...record, status: PayrollStatus.POSTED, postedAt: new Date(), postedBy: actorId, updatedBy: actorId });
-    await this.auditLogs.log({ entityName: 'PayrollRecord', entityId: id, action: 'POST', userId: actorId });
+    this.auditLogs.logAsync({ entityName: 'PayrollRecord', entityId: id, action: 'POST', userId: actorId });
     return updated;
   }
 

@@ -57,6 +57,11 @@ export class LockPeriodDto {
   @IsInt() @Min(1) month: number;
 }
 
+export class PeriodCloseCheckDto {
+  @IsInt() @Min(2000) year: number;
+  @IsInt() @Min(1) month: number;
+}
+
 export class RecordPaymentDto {
   @Type(() => Number)
   @IsInt()

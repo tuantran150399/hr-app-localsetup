@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Job } from '../../models/job.entity';
 import { RevenueEntry, AccountingStatus } from '../../models/revenue-entry.entity';
 import { CostEntry } from '../../models/cost-entry.entity';
@@ -14,14 +14,22 @@ export class DashboardService {
   ) {}
 
   async getStats() {
-    const [totalJobs, revenueRows, costRows] = await Promise.all([
+    const [totalJobs, revenueAgg, costAgg] = await Promise.all([
       this.jobRepo.count({ where: { archivedAt: null } }),
-      this.revRepo.find({ where: { status: Not(AccountingStatus.VOIDED) } }),
-      this.costRepo.find({ where: { status: Not(AccountingStatus.VOIDED) } }),
+      this.revRepo
+        .createQueryBuilder('r')
+        .select('COALESCE(SUM(r.local_amount), 0)', 'total')
+        .where('r.status != :voided', { voided: AccountingStatus.VOIDED })
+        .getRawOne<{ total: string }>(),
+      this.costRepo
+        .createQueryBuilder('c')
+        .select('COALESCE(SUM(c.local_amount), 0)', 'total')
+        .where('c.status != :voided', { voided: AccountingStatus.VOIDED })
+        .getRawOne<{ total: string }>(),
     ]);
 
-    const totalRevenue = revenueRows.reduce((sum, item) => sum + Number(item.localAmount ?? item.amount ?? 0), 0);
-    const totalCost = costRows.reduce((sum, item) => sum + Number(item.localAmount ?? item.amount ?? 0), 0);
+    const totalRevenue = Number(revenueAgg?.total ?? 0);
+    const totalCost = Number(costAgg?.total ?? 0);
 
     return {
       totalJobs,

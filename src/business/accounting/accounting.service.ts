@@ -15,6 +15,7 @@ import { CreateEntryDto, UpdateEntryDto, EntryFilterDto, UpdatePaymentStatusDto,
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
 import { parseWorkbookRows, pickCell, toDateString, toNumber } from '../../common/utils/excel.util';
+import { assertBranchAccess, AuthenticatedUser, canAccessAllBranches, getScopedBranchId } from '../../common/auth/branch-scope.util';
 
 @Injectable()
 export class AccountingService {
@@ -28,9 +29,24 @@ export class AccountingService {
     private auditLogs: AuditLogsService,
   ) {}
 
-  private async assertJobExists(jobId: number): Promise<Job> {
+  private enforceBranchAccess(user: AuthenticatedUser | undefined, branchId?: number | null) {
+    try {
+      assertBranchAccess(user, branchId);
+    } catch {
+      throw new ForbiddenException('You cannot access data from another branch');
+    }
+  }
+
+  private assertGlobalPeriodAccess(user?: AuthenticatedUser) {
+    if (!canAccessAllBranches(user)) {
+      throw new ForbiddenException('Only company-level roles can lock or unlock accounting periods');
+    }
+  }
+
+  private async assertJobExists(jobId: number, actor?: AuthenticatedUser): Promise<Job> {
     const job = await this.jobRepo.findOne({ where: { id: jobId } });
     if (!job || job.archivedAt) throw new NotFoundException(`Job #${jobId} not found`);
+    this.enforceBranchAccess(actor, job.branchId);
     return job;
   }
 
@@ -64,13 +80,13 @@ export class AccountingService {
     }
   }
 
-  async createRevenue(dto: CreateEntryDto, actorId: number) {
+  async createRevenue(dto: CreateEntryDto, actorId: number, actor?: AuthenticatedUser) {
     const entry = await this.dataSource.transaction(async (em) => {
-      await this.assertJobExists(dto.jobId);
+      await this.assertJobExists(dto.jobId, actor);
       await this.assertPeriodNotLocked(this.entryDate(dto.docDate));
       return em.save(RevenueEntry, em.create(RevenueEntry, { ...dto, createdBy: actorId, updatedBy: actorId }));
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'RevenueEntry',
       entityId: entry.id,
       action: 'CREATE',
@@ -80,10 +96,15 @@ export class AccountingService {
     return entry;
   }
 
-  async findRevenue(filter: EntryFilterDto) {
+  async findRevenue(filter: EntryFilterDto, actor?: AuthenticatedUser) {
     const { page = 1, limit = 20, jobId, status, paymentStatus, dateFrom, dateTo, sortBy = 'createdAt', sortOrder = 'DESC' } = filter;
     const qb = this.revRepo.createQueryBuilder('r');
-    if (jobId) qb.andWhere('r.jobId = :jobId', { jobId });
+    if (jobId) {
+      const job = await this.assertJobExists(jobId, actor);
+      qb.andWhere('r.jobId = :jobId', { jobId: job.id });
+    }
+    const scopedBranchId = getScopedBranchId(actor);
+    if (scopedBranchId) qb.innerJoin(Job, 'job_scope', 'job_scope.id = r.jobId AND job_scope.branchId = :branchScopeId', { branchScopeId: scopedBranchId });
     if (status) qb.andWhere('r.status = :status', { status });
     if (paymentStatus) qb.andWhere('r.paymentStatus = :paymentStatus', { paymentStatus });
     if (dateFrom) qb.andWhere('r.createdAt >= :dateFrom', { dateFrom });
@@ -94,20 +115,23 @@ export class AccountingService {
     return paginate(await qb.getManyAndCount(), page, limit);
   }
 
-  async findRevenueOne(id: number) {
+  async findRevenueOne(id: number, actor?: AuthenticatedUser) {
     const entry = await this.revRepo.findOne({ where: { id } });
     if (!entry) throw new NotFoundException('Revenue entry not found');
+    await this.assertJobExists(entry.jobId, actor);
     return entry;
   }
 
-  findRevenueByJob(jobId: number) {
+  async findRevenueByJob(jobId: number, actor?: AuthenticatedUser) {
+    await this.assertJobExists(jobId, actor);
     return this.revRepo.find({ where: { jobId }, order: { createdAt: 'ASC' } });
   }
 
-  async updateRevenue(id: number, dto: UpdateEntryDto, actorId: number) {
+  async updateRevenue(id: number, dto: UpdateEntryDto, actorId: number, actor?: AuthenticatedUser) {
     const updated = await this.dataSource.transaction(async (em) => {
       const entry = await em.findOne(RevenueEntry, { where: { id } });
       if (!entry) throw new NotFoundException('Revenue entry not found');
+      await this.assertJobExists(entry.jobId, actor);
       if (entry.status === AccountingStatus.POSTED)
         throw new BadRequestException('Cannot modify a POSTED entry - use void/reversal instead');
       if (entry.status === AccountingStatus.VOIDED)
@@ -115,7 +139,7 @@ export class AccountingService {
       await this.assertPeriodNotLocked(this.entryDate(dto.docDate ?? entry.docDate));
       return em.save(RevenueEntry, { ...entry, ...dto, updatedBy: actorId });
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'RevenueEntry',
       entityId: id,
       action: 'UPDATE',
@@ -125,17 +149,18 @@ export class AccountingService {
     return updated;
   }
 
-  async deleteRevenue(id: number, actorId?: number) {
+  async deleteRevenue(id: number, actorId?: number, actor?: AuthenticatedUser) {
     const entry = await this.dataSource.transaction(async (em) => {
       const existing = await em.findOne(RevenueEntry, { where: { id } });
       if (!existing) throw new NotFoundException('Revenue entry not found');
+      await this.assertJobExists(existing.jobId, actor);
       if (existing.status !== AccountingStatus.DRAFT)
         throw new BadRequestException('Only DRAFT entries can be deleted');
       await this.assertPeriodNotLocked(this.entryDate(existing.docDate));
       await em.remove(RevenueEntry, existing);
       return existing;
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'RevenueEntry',
       entityId: id,
       action: 'DELETE',
@@ -145,15 +170,16 @@ export class AccountingService {
     return { message: 'Revenue entry deleted' };
   }
 
-  async updateRevenuePaymentStatus(id: number, dto: UpdatePaymentStatusDto, actorId: number) {
+  async updateRevenuePaymentStatus(id: number, dto: UpdatePaymentStatusDto, actorId: number, actor?: AuthenticatedUser) {
     const entry = await this.revRepo.findOne({ where: { id } });
     if (!entry) throw new NotFoundException('Revenue entry not found');
+    await this.assertJobExists(entry.jobId, actor);
     if (entry.status !== AccountingStatus.POSTED)
       throw new BadRequestException('Payment status can only be updated on POSTED entries');
     await this.assertPeriodNotLocked(this.entryDate(entry.docDate ?? entry.postedAt));
     const old = entry.paymentStatus;
     const updated = await this.revRepo.save({ ...entry, paymentStatus: dto.paymentStatus, updatedBy: actorId });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'RevenueEntry',
       entityId: id,
       action: 'PAYMENT_STATUS_CHANGE',
@@ -164,7 +190,7 @@ export class AccountingService {
     return updated;
   }
 
-  async postRevenue(id: number, actorId: number) {
+  async postRevenue(id: number, actorId: number, actor?: AuthenticatedUser) {
     const posted = await this.dataSource.transaction(async (em) => {
       const entry = await em.findOne(RevenueEntry, { where: { id } });
       if (!entry) throw new NotFoundException('Revenue entry not found');
@@ -172,18 +198,20 @@ export class AccountingService {
       if (entry.status === AccountingStatus.VOIDED) throw new BadRequestException('Entry is voided');
       const job = await em.findOne(Job, { where: { id: entry.jobId } });
       if (!job || job.archivedAt) throw new NotFoundException(`Job #${entry.jobId} not found`);
+      this.enforceBranchAccess(actor, job.branchId);
       this.assertJobPostable(job);
       await this.assertPeriodNotLocked(this.entryDate(entry.docDate));
       return em.save(RevenueEntry, { ...entry, status: AccountingStatus.POSTED, postedAt: new Date(), postedBy: actorId, updatedBy: actorId });
     });
-    await this.auditLogs.log({ entityName: 'RevenueEntry', entityId: id, action: 'POST_REVENUE', userId: actorId, newValues: { status: AccountingStatus.POSTED, jobId: posted.jobId } });
+    this.auditLogs.logAsync({ entityName: 'RevenueEntry', entityId: id, action: 'POST_REVENUE', userId: actorId, newValues: { status: AccountingStatus.POSTED, jobId: posted.jobId } });
     return posted;
   }
 
-  async voidRevenue(id: number, actorId: number, reason?: string) {
+  async voidRevenue(id: number, actorId: number, reason?: string, actor?: AuthenticatedUser) {
     const result = await this.dataSource.transaction(async (em) => {
       const original = await em.findOne(RevenueEntry, { where: { id } });
       if (!original) throw new NotFoundException('Revenue entry not found');
+      await this.assertJobExists(original.jobId, actor);
       if (original.status !== AccountingStatus.POSTED)
         throw new BadRequestException('Only POSTED entries can be voided');
       await this.assertPeriodNotLocked(this.entryDate(original.docDate ?? original.postedAt));
@@ -206,18 +234,18 @@ export class AccountingService {
       });
       return em.save(RevenueEntry, reversal);
     });
-    await this.auditLogs.log({ entityName: 'RevenueEntry', entityId: id, action: 'VOID_REVENUE', userId: actorId, newValues: { reversalEntryId: result.id, reason } });
+    this.auditLogs.logAsync({ entityName: 'RevenueEntry', entityId: id, action: 'VOID_REVENUE', userId: actorId, newValues: { reversalEntryId: result.id, reason } });
     return result;
   }
 
-  async createCost(dto: CreateEntryDto, actorId: number) {
+  async createCost(dto: CreateEntryDto, actorId: number, actor?: AuthenticatedUser) {
     const entry = await this.dataSource.transaction(async (em) => {
-      await this.assertJobExists(dto.jobId);
+      await this.assertJobExists(dto.jobId, actor);
       await this.assertVendorExists(dto.vendorId);
       await this.assertPeriodNotLocked(this.entryDate(dto.docDate));
       return em.save(CostEntry, em.create(CostEntry, { ...dto, createdBy: actorId, updatedBy: actorId }));
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'CostEntry',
       entityId: entry.id,
       action: 'CREATE',
@@ -227,7 +255,7 @@ export class AccountingService {
     return entry;
   }
 
-  async importCostEntries(fileBuffer: Buffer, actorId: number) {
+  async importCostEntries(fileBuffer: Buffer, actorId: number, actor?: AuthenticatedUser) {
     const rows = await parseWorkbookRows(fileBuffer);
     if (!rows.length) {
       throw new BadRequestException('The uploaded file does not contain any data rows');
@@ -245,8 +273,8 @@ export class AccountingService {
       const rowNumber = index + 2;
 
       try {
-        const dto = await this.mapImportedCostRow(row);
-        await this.createCost(dto, actorId);
+        const dto = await this.mapImportedCostRow(row, actor);
+        await this.createCost(dto, actorId, actor);
         summary.createdCount += 1;
       } catch (error) {
         summary.errorCount += 1;
@@ -260,11 +288,16 @@ export class AccountingService {
     };
   }
 
-  async findCost(filter: EntryFilterDto) {
+  async findCost(filter: EntryFilterDto, actor?: AuthenticatedUser) {
     const { page = 1, limit = 20, jobId, vendorId, status, paymentStatus, dateFrom, dateTo, sortBy = 'createdAt', sortOrder = 'DESC' } = filter;
     const qb = this.costRepo.createQueryBuilder('c');
-    if (jobId) qb.andWhere('c.jobId = :jobId', { jobId });
+    if (jobId) {
+      const job = await this.assertJobExists(jobId, actor);
+      qb.andWhere('c.jobId = :jobId', { jobId: job.id });
+    }
     if (vendorId) qb.andWhere('c.vendorId = :vendorId', { vendorId });
+    const scopedBranchId = getScopedBranchId(actor);
+    if (scopedBranchId) qb.innerJoin(Job, 'job_scope', 'job_scope.id = c.jobId AND job_scope.branchId = :branchScopeId', { branchScopeId: scopedBranchId });
     if (status) qb.andWhere('c.status = :status', { status });
     if (paymentStatus) qb.andWhere('c.paymentStatus = :paymentStatus', { paymentStatus });
     if (dateFrom) qb.andWhere('c.createdAt >= :dateFrom', { dateFrom });
@@ -275,20 +308,23 @@ export class AccountingService {
     return paginate(await qb.getManyAndCount(), page, limit);
   }
 
-  async findCostOne(id: number) {
+  async findCostOne(id: number, actor?: AuthenticatedUser) {
     const entry = await this.costRepo.findOne({ where: { id } });
     if (!entry) throw new NotFoundException('Cost entry not found');
+    await this.assertJobExists(entry.jobId, actor);
     return entry;
   }
 
-  findCostByJob(jobId: number) {
+  async findCostByJob(jobId: number, actor?: AuthenticatedUser) {
+    await this.assertJobExists(jobId, actor);
     return this.costRepo.find({ where: { jobId }, order: { createdAt: 'ASC' } });
   }
 
-  async updateCost(id: number, dto: UpdateEntryDto, actorId: number) {
+  async updateCost(id: number, dto: UpdateEntryDto, actorId: number, actor?: AuthenticatedUser) {
     const updated = await this.dataSource.transaction(async (em) => {
       const entry = await em.findOne(CostEntry, { where: { id } });
       if (!entry) throw new NotFoundException('Cost entry not found');
+      await this.assertJobExists(entry.jobId, actor);
       if (entry.status === AccountingStatus.POSTED)
         throw new BadRequestException('Cannot modify a POSTED entry - use void/reversal instead');
       if (entry.status === AccountingStatus.VOIDED)
@@ -297,7 +333,7 @@ export class AccountingService {
       await this.assertPeriodNotLocked(this.entryDate(dto.docDate ?? entry.docDate));
       return em.save(CostEntry, { ...entry, ...dto, updatedBy: actorId });
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'CostEntry',
       entityId: id,
       action: 'UPDATE',
@@ -307,17 +343,18 @@ export class AccountingService {
     return updated;
   }
 
-  async deleteCost(id: number, actorId?: number) {
+  async deleteCost(id: number, actorId?: number, actor?: AuthenticatedUser) {
     const entry = await this.dataSource.transaction(async (em) => {
       const existing = await em.findOne(CostEntry, { where: { id } });
       if (!existing) throw new NotFoundException('Cost entry not found');
+      await this.assertJobExists(existing.jobId, actor);
       if (existing.status !== AccountingStatus.DRAFT)
         throw new BadRequestException('Only DRAFT entries can be deleted');
       await this.assertPeriodNotLocked(this.entryDate(existing.docDate));
       await em.remove(CostEntry, existing);
       return existing;
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'CostEntry',
       entityId: id,
       action: 'DELETE',
@@ -327,15 +364,16 @@ export class AccountingService {
     return { message: 'Cost entry deleted' };
   }
 
-  async updateCostPaymentStatus(id: number, dto: UpdatePaymentStatusDto, actorId: number) {
+  async updateCostPaymentStatus(id: number, dto: UpdatePaymentStatusDto, actorId: number, actor?: AuthenticatedUser) {
     const entry = await this.costRepo.findOne({ where: { id } });
     if (!entry) throw new NotFoundException('Cost entry not found');
+    await this.assertJobExists(entry.jobId, actor);
     if (entry.status !== AccountingStatus.POSTED)
       throw new BadRequestException('Payment status can only be updated on POSTED entries');
     await this.assertPeriodNotLocked(this.entryDate(entry.docDate ?? entry.postedAt));
     const old = entry.paymentStatus;
     const updated = await this.costRepo.save({ ...entry, paymentStatus: dto.paymentStatus, updatedBy: actorId });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'CostEntry',
       entityId: id,
       action: 'PAYMENT_STATUS_CHANGE',
@@ -346,7 +384,7 @@ export class AccountingService {
     return updated;
   }
 
-  async postCost(id: number, actorId: number) {
+  async postCost(id: number, actorId: number, actor?: AuthenticatedUser) {
     const posted = await this.dataSource.transaction(async (em) => {
       const entry = await em.findOne(CostEntry, { where: { id } });
       if (!entry) throw new NotFoundException('Cost entry not found');
@@ -354,19 +392,21 @@ export class AccountingService {
       if (entry.status === AccountingStatus.VOIDED) throw new BadRequestException('Entry is voided');
       const job = await em.findOne(Job, { where: { id: entry.jobId } });
       if (!job || job.archivedAt) throw new NotFoundException(`Job #${entry.jobId} not found`);
+      this.enforceBranchAccess(actor, job.branchId);
       this.assertJobPostable(job);
       await this.assertVendorExists(entry.vendorId);
       await this.assertPeriodNotLocked(this.entryDate(entry.docDate));
       return em.save(CostEntry, { ...entry, status: AccountingStatus.POSTED, postedAt: new Date(), postedBy: actorId, updatedBy: actorId });
     });
-    await this.auditLogs.log({ entityName: 'CostEntry', entityId: id, action: 'POST_COST', userId: actorId, newValues: { status: AccountingStatus.POSTED, jobId: posted.jobId } });
+    this.auditLogs.logAsync({ entityName: 'CostEntry', entityId: id, action: 'POST_COST', userId: actorId, newValues: { status: AccountingStatus.POSTED, jobId: posted.jobId } });
     return posted;
   }
 
-  async voidCost(id: number, actorId: number, reason?: string) {
+  async voidCost(id: number, actorId: number, reason?: string, actor?: AuthenticatedUser) {
     const result = await this.dataSource.transaction(async (em) => {
       const original = await em.findOne(CostEntry, { where: { id } });
       if (!original) throw new NotFoundException('Cost entry not found');
+      await this.assertJobExists(original.jobId, actor);
       if (original.status !== AccountingStatus.POSTED)
         throw new BadRequestException('Only POSTED entries can be voided');
       await this.assertPeriodNotLocked(this.entryDate(original.docDate ?? original.postedAt));
@@ -390,14 +430,15 @@ export class AccountingService {
       });
       return em.save(CostEntry, reversal);
     });
-    await this.auditLogs.log({ entityName: 'CostEntry', entityId: id, action: 'VOID_COST', userId: actorId, newValues: { reversalEntryId: result.id, reason } });
+    this.auditLogs.logAsync({ entityName: 'CostEntry', entityId: id, action: 'VOID_COST', userId: actorId, newValues: { reversalEntryId: result.id, reason } });
     return result;
   }
 
-  async postAllForJob(jobId: number, actorId: number) {
+  async postAllForJob(jobId: number, actorId: number, actor?: AuthenticatedUser) {
     const result = await this.dataSource.transaction(async (em) => {
       const job = await em.findOne(Job, { where: { id: jobId } });
       if (!job || job.archivedAt) throw new NotFoundException(`Job #${jobId} not found`);
+      this.enforceBranchAccess(actor, job.branchId);
       this.assertJobPostable(job);
       const [draftRev, draftCost] = await Promise.all([
         em.find(RevenueEntry, { where: { jobId, status: AccountingStatus.DRAFT } }),
@@ -421,12 +462,12 @@ export class AccountingService {
       ]);
       return { jobId, postedRevenue: draftRev.length, postedCost: draftCost.length };
     });
-    await this.auditLogs.log({ entityName: 'Job', entityId: jobId, action: 'POST_ALL', userId: actorId, newValues: result });
+    this.auditLogs.logAsync({ entityName: 'Job', entityId: jobId, action: 'POST_ALL', userId: actorId, newValues: result });
     return { ...result, message: `Posted ${result.postedRevenue} revenue and ${result.postedCost} cost entries` };
   }
 
-  async getProfitSummary(jobId: number) {
-    await this.assertJobExists(jobId);
+  async getProfitSummary(jobId: number, actor?: AuthenticatedUser) {
+    await this.assertJobExists(jobId, actor);
     const [revEntries, costEntries] = await Promise.all([
       this.revRepo.find({ where: { jobId, status: AccountingStatus.POSTED } }),
       this.costRepo.find({ where: { jobId, status: AccountingStatus.POSTED } }),
@@ -436,10 +477,11 @@ export class AccountingService {
     return { jobId, totalRevenue, totalCost, profit: totalRevenue - totalCost, revenueEntries: revEntries.length, costEntries: costEntries.length };
   }
 
-  async recordRevenueReceipt(dto: RecordPaymentDto, actorId: number) {
+  async recordRevenueReceipt(dto: RecordPaymentDto, actorId: number, actor?: AuthenticatedUser) {
     const updated = await this.dataSource.transaction(async (em) => {
       const entry = await em.findOne(RevenueEntry, { where: { id: dto.entryId } });
       if (!entry) throw new NotFoundException('Revenue entry not found');
+      await this.assertJobExists(entry.jobId, actor);
       if (entry.status !== AccountingStatus.POSTED) {
         throw new BadRequestException('Receipts can only be recorded for POSTED revenue entries');
       }
@@ -447,7 +489,7 @@ export class AccountingService {
       const paymentStatus = Number(dto.amount) >= Number(entry.localAmount) ? PaymentStatus.PAID : PaymentStatus.PARTIAL;
       return em.save(RevenueEntry, { ...entry, paymentStatus, updatedBy: actorId });
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'RevenueEntry',
       entityId: dto.entryId,
       action: 'RECORD_RECEIPT',
@@ -463,10 +505,11 @@ export class AccountingService {
     return updated;
   }
 
-  async recordVendorPayment(dto: RecordPaymentDto, actorId: number) {
+  async recordVendorPayment(dto: RecordPaymentDto, actorId: number, actor?: AuthenticatedUser) {
     const updated = await this.dataSource.transaction(async (em) => {
       const entry = await em.findOne(CostEntry, { where: { id: dto.entryId } });
       if (!entry) throw new NotFoundException('Cost entry not found');
+      await this.assertJobExists(entry.jobId, actor);
       if (entry.status !== AccountingStatus.POSTED) {
         throw new BadRequestException('Vendor payments can only be recorded for POSTED cost entries');
       }
@@ -474,7 +517,7 @@ export class AccountingService {
       const paymentStatus = Number(dto.amount) >= Number(entry.localAmount) ? PaymentStatus.PAID : PaymentStatus.PARTIAL;
       return em.save(CostEntry, { ...entry, paymentStatus, updatedBy: actorId });
     });
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'CostEntry',
       entityId: dto.entryId,
       action: 'RECORD_VENDOR_PAYMENT',
@@ -490,17 +533,18 @@ export class AccountingService {
     return updated;
   }
 
-  async getRevenueChart(filter: EntryFilterDto) {
-    return this.getEntryChart(this.revRepo, 'r', filter);
+  async getRevenueChart(filter: EntryFilterDto, actor?: AuthenticatedUser) {
+    return this.getEntryChart(this.revRepo, 'r', filter, actor);
   }
 
-  async getCostChart(filter: EntryFilterDto) {
-    return this.getEntryChart(this.costRepo, 'c', filter);
+  async getCostChart(filter: EntryFilterDto, actor?: AuthenticatedUser) {
+    return this.getEntryChart(this.costRepo, 'c', filter, actor);
   }
 
-  private async getEntryChart(repo: Repository<RevenueEntry | CostEntry>, alias: string, filter: EntryFilterDto) {
+  private async getEntryChart(repo: Repository<RevenueEntry | CostEntry>, alias: string, filter: EntryFilterDto, actor?: AuthenticatedUser) {
     const dateExpr = `COALESCE(${alias}.docDate, ${alias}.createdAt)`;
     const qb = repo.createQueryBuilder(alias)
+      .innerJoin(Job, 'j', `j.id = ${alias}.jobId`)
       .select(`DATE_FORMAT(${dateExpr}, '%Y-%m')`, 'period')
       .addSelect(`SUM(${alias}.localAmount)`, 'totalAmount')
       .addSelect(`COUNT(${alias}.id)`, 'count')
@@ -508,6 +552,8 @@ export class AccountingService {
     if (filter.dateFrom) qb.andWhere(`${dateExpr} >= :dateFrom`, { dateFrom: filter.dateFrom });
     if (filter.dateTo) qb.andWhere(`${dateExpr} <= :dateTo`, { dateTo: filter.dateTo });
     if (filter.paymentStatus) qb.andWhere(`${alias}.paymentStatus = :paymentStatus`, { paymentStatus: filter.paymentStatus });
+    const scopedBranchId = getScopedBranchId(actor);
+    if (scopedBranchId) qb.andWhere('j.branchId = :branchId', { branchId: scopedBranchId });
     qb.groupBy('period').orderBy('period', 'ASC');
     const rows = await qb.getRawMany();
     return {
@@ -519,11 +565,59 @@ export class AccountingService {
     };
   }
 
+  async getPeriodCloseCheck(year: number, month: number, actor?: AuthenticatedUser) {
+    const periodStart = `${year}-${String(month).padStart(2, '0')}-01`;
+    const periodEnd = new Date(year, month, 0).toISOString().split('T')[0];
+    const scopedBranchId = getScopedBranchId(actor);
+
+    const buildCountQuery = (repo: Repository<RevenueEntry | CostEntry>, alias: string, status?: AccountingStatus) => {
+      const qb = repo.createQueryBuilder(alias)
+        .innerJoin(Job, 'j', `j.id = ${alias}.jobId`)
+        .where(`COALESCE(${alias}.docDate, ${alias}.createdAt) >= :periodStart`, { periodStart })
+        .andWhere(`COALESCE(${alias}.docDate, ${alias}.createdAt) <= :periodEnd`, { periodEnd });
+      if (status) qb.andWhere(`${alias}.status = :status`, { status });
+      if (scopedBranchId) qb.andWhere('j.branchId = :branchId', { branchId: scopedBranchId });
+      return qb;
+    };
+
+    const [draftRevenue, draftCost, postedUnpaidRevenue, postedUnpaidCost] = await Promise.all([
+      buildCountQuery(this.revRepo, 'r', AccountingStatus.DRAFT).getCount(),
+      buildCountQuery(this.costRepo, 'c', AccountingStatus.DRAFT).getCount(),
+      buildCountQuery(this.revRepo, 'r', AccountingStatus.POSTED)
+        .andWhere('r.paymentStatus IN (:...paymentStatuses)', { paymentStatuses: [PaymentStatus.UNPAID, PaymentStatus.PARTIAL] })
+        .getCount(),
+      buildCountQuery(this.costRepo, 'c', AccountingStatus.POSTED)
+        .andWhere('c.paymentStatus IN (:...paymentStatuses)', { paymentStatuses: [PaymentStatus.UNPAID, PaymentStatus.PARTIAL] })
+        .getCount(),
+    ]);
+
+    const blockers = [];
+    if (draftRevenue) blockers.push(`${draftRevenue} draft revenue entr${draftRevenue === 1 ? 'y' : 'ies'}`);
+    if (draftCost) blockers.push(`${draftCost} draft cost entr${draftCost === 1 ? 'y' : 'ies'}`);
+
+    return {
+      year,
+      month,
+      branchId: scopedBranchId ?? null,
+      draftRevenue,
+      draftCost,
+      postedUnpaidRevenue,
+      postedUnpaidCost,
+      canLock: blockers.length === 0,
+      blockers,
+    };
+  }
+
   getPeriods() {
     return this.periodRepo.find({ order: { year: 'DESC', month: 'DESC' } });
   }
 
-  async lockPeriod(dto: LockPeriodDto, actorId: number) {
+  async lockPeriod(dto: LockPeriodDto, actorId: number, actor?: AuthenticatedUser) {
+    this.assertGlobalPeriodAccess(actor);
+    const closeCheck = await this.getPeriodCloseCheck(dto.year, dto.month, actor);
+    if (!closeCheck.canLock) {
+      throw new BadRequestException(`Period cannot be locked: ${closeCheck.blockers.join(', ')}`);
+    }
     let period = await this.periodRepo.findOne({ where: { year: dto.year, month: dto.month } });
     if (!period) {
       period = this.periodRepo.create({ year: dto.year, month: dto.month, createdBy: actorId, updatedBy: actorId });
@@ -534,11 +628,12 @@ export class AccountingService {
     period.lockedBy = actorId;
     period.updatedBy = actorId;
     const saved = await this.periodRepo.save(period);
-    await this.auditLogs.log({ entityName: 'AccountingPeriod', entityId: saved.id, action: 'LOCK', userId: actorId, newValues: { year: saved.year, month: saved.month } });
+    this.auditLogs.logAsync({ entityName: 'AccountingPeriod', entityId: saved.id, action: 'LOCK', userId: actorId, newValues: { year: saved.year, month: saved.month } });
     return saved;
   }
 
-  async unlockPeriod(dto: LockPeriodDto, actorId: number) {
+  async unlockPeriod(dto: LockPeriodDto, actorId: number, actor?: AuthenticatedUser) {
+    this.assertGlobalPeriodAccess(actor);
     const period = await this.periodRepo.findOne({ where: { year: dto.year, month: dto.month } });
     if (!period || !period.isLocked) throw new BadRequestException('Period is not locked');
     period.isLocked = false;
@@ -546,12 +641,12 @@ export class AccountingService {
     period.unlockedBy = actorId;
     period.updatedBy = actorId;
     const saved = await this.periodRepo.save(period);
-    await this.auditLogs.log({ entityName: 'AccountingPeriod', entityId: saved.id, action: 'UNLOCK', userId: actorId, newValues: { year: saved.year, month: saved.month } });
+    this.auditLogs.logAsync({ entityName: 'AccountingPeriod', entityId: saved.id, action: 'UNLOCK', userId: actorId, newValues: { year: saved.year, month: saved.month } });
     return saved;
   }
 
-  private async mapImportedCostRow(row: Record<string, unknown>): Promise<CreateEntryDto> {
-    const jobId = await this.resolveJobId(row);
+  private async mapImportedCostRow(row: Record<string, unknown>, actor?: AuthenticatedUser): Promise<CreateEntryDto> {
+    const jobId = await this.resolveJobId(row, actor);
     const vendorId = await this.resolveVendorId(row);
     const description = this.readString(row, 'description', 'costName', 'cost_name');
     const amount = toNumber(pickCell(row, 'amount'));
@@ -579,10 +674,10 @@ export class AccountingService {
     };
   }
 
-  private async resolveJobId(row: Record<string, unknown>): Promise<number | undefined> {
+  private async resolveJobId(row: Record<string, unknown>, actor?: AuthenticatedUser): Promise<number | undefined> {
     const directId = toNumber(pickCell(row, 'jobId', 'job_id'));
     if (directId) {
-      await this.assertJobExists(directId);
+      await this.assertJobExists(directId, actor);
       return directId;
     }
 
@@ -591,6 +686,7 @@ export class AccountingService {
 
     const job = await this.jobRepo.findOne({ where: { jobCode } });
     if (!job || job.archivedAt) throw new BadRequestException(`Job code "${jobCode}" not found`);
+    this.enforceBranchAccess(actor, job.branchId);
     return job.id;
   }
 

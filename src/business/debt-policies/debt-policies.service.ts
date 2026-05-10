@@ -31,7 +31,7 @@ export class DebtPoliciesService {
         updatedBy: actorId,
       }),
     );
-    await this.auditLogs.log({
+    this.auditLogs.logAsync({
       entityName: 'DebtPolicy',
       entityId: policy.id,
       action: existing ? 'UPDATE' : 'CREATE',

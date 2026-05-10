@@ -22,7 +22,7 @@ export class AdvancesService {
     if (dto.jobId) await this.assertJob(dto.jobId);
     await this.assertNoOverdueAdvance(dto.employeeId);
     const advance = await this.repo.save(this.repo.create({ ...dto, status: AdvanceStatus.PENDING, createdBy: actorId, updatedBy: actorId }));
-    await this.auditLogs.log({ entityName: 'EmployeeAdvance', entityId: advance.id, action: 'CREATE', userId: actorId, newValues: advance });
+    this.auditLogs.logAsync({ entityName: 'EmployeeAdvance', entityId: advance.id, action: 'CREATE', userId: actorId, newValues: advance });
     return advance;
   }
 
@@ -48,7 +48,7 @@ export class AdvancesService {
     const advance = await this.findOne(id);
     if (advance.status !== AdvanceStatus.PENDING) throw new BadRequestException('Only pending advances can be approved');
     const updated = await this.repo.save({ ...advance, status: AdvanceStatus.APPROVED, approvedAt: new Date(), approvedBy: actorId, updatedBy: actorId });
-    await this.auditLogs.log({ entityName: 'EmployeeAdvance', entityId: id, action: 'APPROVE', userId: actorId });
+    this.auditLogs.logAsync({ entityName: 'EmployeeAdvance', entityId: id, action: 'APPROVE', userId: actorId });
     return updated;
   }
 
@@ -56,7 +56,7 @@ export class AdvancesService {
     const advance = await this.findOne(id);
     if (advance.status !== AdvanceStatus.PENDING) throw new BadRequestException('Only pending advances can be rejected');
     const updated = await this.repo.save({ ...advance, status: AdvanceStatus.REJECTED, rejectReason: dto.reason, updatedBy: actorId });
-    await this.auditLogs.log({ entityName: 'EmployeeAdvance', entityId: id, action: 'REJECT', userId: actorId, newValues: { reason: dto.reason } });
+    this.auditLogs.logAsync({ entityName: 'EmployeeAdvance', entityId: id, action: 'REJECT', userId: actorId, newValues: { reason: dto.reason } });
     return updated;
   }
 
@@ -74,7 +74,7 @@ export class AdvancesService {
       settledBy: status === AdvanceStatus.SETTLED ? actorId : advance.settledBy,
       updatedBy: actorId,
     });
-    await this.auditLogs.log({ entityName: 'EmployeeAdvance', entityId: id, action: 'SETTLE', userId: actorId, newValues: { amount: dto.amount, settledAmount: nextSettled } });
+    this.auditLogs.logAsync({ entityName: 'EmployeeAdvance', entityId: id, action: 'SETTLE', userId: actorId, newValues: { amount: dto.amount, settledAmount: nextSettled } });
     return updated;
   }
 

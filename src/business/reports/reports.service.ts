@@ -7,6 +7,7 @@ import { CostEntry } from '../../models/cost-entry.entity';
 import { Partner } from '../../models/partner.entity';
 import { ReportFilterDto } from './dto/report-filter.dto';
 import { buildWorkbookBuffer } from '../../common/utils/excel.util';
+import { AuthenticatedUser, getScopedBranchId } from '../../common/auth/branch-scope.util';
 
 @Injectable()
 export class ReportsService {
@@ -16,10 +17,18 @@ export class ReportsService {
     @InjectRepository(CostEntry) private costRepo: Repository<CostEntry>,
   ) {}
 
+  private applyBranchScope(filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    return { ...filter, branchId: getScopedBranchId(actor, filter.branchId) };
+  }
+
   // ─── Job profit ────────────────────────────────────────────────────────────
 
   /** Profit summary for a single job (POSTED entries only). */
-  async profitByJob(jobId: number) {
+  async profitByJob(jobId: number, actor?: AuthenticatedUser) {
+    const job = await this.jobRepo.findOne({ where: { id: jobId } });
+    if (!job) throw new BadRequestException('Job not found');
+    const scoped = this.applyBranchScope({ branchId: job.branchId }, actor);
+    if (scoped.branchId && scoped.branchId !== job.branchId) throw new BadRequestException('Job not found');
     const [revEntries, costEntries] = await Promise.all([
       this.revRepo.find({ where: { jobId, status: AccountingStatus.POSTED } }),
       this.costRepo.find({ where: { jobId, status: AccountingStatus.POSTED } }),
@@ -35,7 +44,8 @@ export class ReportsService {
    * Revenue / Cost / Profit grouped by branch.
    * Uses raw query for aggregation efficiency.
    */
-  async revenueByBranch(filter: ReportFilterDto) {
+  async revenueByBranch(filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    filter = this.applyBranchScope(filter, actor);
     const { dateFrom, dateTo } = filter;
 
     const revQb = this.revRepo
@@ -79,7 +89,8 @@ export class ReportsService {
 
   // ─── Customer (partner) summary ────────────────────────────────────────────
 
-  async revenueByCustomer(filter: ReportFilterDto) {
+  async revenueByCustomer(filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    filter = this.applyBranchScope(filter, actor);
     const { dateFrom, dateTo } = filter;
 
     const revQb = this.revRepo
@@ -121,7 +132,8 @@ export class ReportsService {
     return { data: rows };
   }
 
-  async pnlByPeriod(filter: ReportFilterDto) {
+  async pnlByPeriod(filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    filter = this.applyBranchScope(filter, actor);
     if (filter.groupBy === 'job') return this.pnlByJob(filter);
     if (filter.groupBy === 'customer') return this.pnlByCustomer(filter);
 
@@ -143,7 +155,8 @@ export class ReportsService {
     return { data: [...map.values()].sort((a, b) => a.period.localeCompare(b.period)) };
   }
 
-  async cashFlow(filter: ReportFilterDto) {
+  async cashFlow(filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    filter = this.applyBranchScope(filter, actor);
     const groupBy = ['month', 'quarter', 'year'].includes(filter.groupBy ?? '')
       ? filter.groupBy as 'month' | 'quarter' | 'year'
       : 'month';
@@ -164,8 +177,8 @@ export class ReportsService {
     return { data: [...map.values()].sort((a, b) => a.period.localeCompare(b.period)) };
   }
 
-  async exportReport(reportKey: string, filter: ReportFilterDto) {
-    const result = await this.getReportData(reportKey, filter);
+  async exportReport(reportKey: string, filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    const result = await this.getReportData(reportKey, this.applyBranchScope(filter, actor), actor);
     const rows = Array.isArray((result as { data?: unknown[] }).data)
       ? (result as { data: Record<string, unknown>[] }).data
       : Array.isArray(result)
@@ -268,7 +281,8 @@ export class ReportsService {
 
   // ─── Job status summary ────────────────────────────────────────────────────
 
-  async jobStatusSummary(filter: ReportFilterDto) {
+  async jobStatusSummary(filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    filter = this.applyBranchScope(filter, actor);
     const qb = this.jobRepo.createQueryBuilder('j')
       .select('j.status', 'status')
       .addSelect('COUNT(j.id)', 'count');
@@ -283,7 +297,8 @@ export class ReportsService {
   // ─── Receivable / Payable summary ─────────────────────────────────────────
 
   /** Outstanding (UNPAID + PARTIAL) posted revenue entries = receivables */
-  async receivableSummary(filter: ReportFilterDto) {
+  async receivableSummary(filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    filter = this.applyBranchScope(filter, actor);
     const qb = this.revRepo.createQueryBuilder('r')
       .innerJoin(Job, 'j', 'j.id = r.jobId')
       .select('r.paymentStatus', 'paymentStatus')
@@ -303,7 +318,8 @@ export class ReportsService {
   }
 
   /** Outstanding posted cost entries = payables */
-  async payableSummary(filter: ReportFilterDto) {
+  async payableSummary(filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    filter = this.applyBranchScope(filter, actor);
     const qb = this.costRepo.createQueryBuilder('c')
       .innerJoin(Job, 'j', 'j.id = c.jobId')
       .select('c.paymentStatus', 'paymentStatus')
@@ -326,7 +342,8 @@ export class ReportsService {
   /**
    * Revenue entries that are POSTED, not fully PAID, and whose dueDate < today.
    */
-  async overdueReceivables(filter: ReportFilterDto) {
+  async overdueReceivables(filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    filter = this.applyBranchScope(filter, actor);
     const today = new Date().toISOString().split('T')[0];
     const qb = this.revRepo.createQueryBuilder('r')
       .innerJoin(Job, 'j', 'j.id = r.jobId')
@@ -342,7 +359,8 @@ export class ReportsService {
     return { count: rows.length, totalAmount: total, data: rows };
   }
 
-  async overduePayables(filter: ReportFilterDto) {
+  async overduePayables(filter: ReportFilterDto, actor?: AuthenticatedUser) {
+    filter = this.applyBranchScope(filter, actor);
     const today = new Date().toISOString().split('T')[0];
     const qb = this.costRepo.createQueryBuilder('c')
       .innerJoin(Job, 'j', 'j.id = c.jobId')
@@ -357,26 +375,26 @@ export class ReportsService {
     return { count: rows.length, totalAmount: total, data: rows };
   }
 
-  private async getReportData(reportKey: string, filter: ReportFilterDto) {
+  private async getReportData(reportKey: string, filter: ReportFilterDto, actor?: AuthenticatedUser) {
     switch (reportKey) {
       case 'branch-summary':
-        return this.revenueByBranch(filter);
+        return this.revenueByBranch(filter, actor);
       case 'customer-summary':
-        return this.revenueByCustomer(filter);
+        return this.revenueByCustomer(filter, actor);
       case 'job-status-summary':
-        return this.jobStatusSummary(filter);
+        return this.jobStatusSummary(filter, actor);
       case 'receivables':
-        return this.receivableSummary(filter);
+        return this.receivableSummary(filter, actor);
       case 'payables':
-        return this.payableSummary(filter);
+        return this.payableSummary(filter, actor);
       case 'overdue-receivables':
-        return this.overdueReceivables(filter);
+        return this.overdueReceivables(filter, actor);
       case 'overdue-payables':
-        return this.overduePayables(filter);
+        return this.overduePayables(filter, actor);
       case 'pnl':
-        return this.pnlByPeriod(filter);
+        return this.pnlByPeriod(filter, actor);
       case 'cash-flow':
-        return this.cashFlow(filter);
+        return this.cashFlow(filter, actor);
       default:
         throw new BadRequestException(`Unsupported report export "${reportKey}"`);
     }
