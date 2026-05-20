@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
-import { RevenueEntry, AccountingStatus, PaymentStatus } from '../../models/revenue-entry.entity';
+import { RevenueEntry, AccountingStatus, PaymentMethod, PaymentStatus } from '../../models/revenue-entry.entity';
 import { CostEntry } from '../../models/cost-entry.entity';
 import { Job, JobStatus } from '../../models/job.entity';
 import { Partner, PartnerType } from '../../models/partner.entity';
@@ -177,15 +177,21 @@ export class AccountingService {
     if (entry.status !== AccountingStatus.POSTED)
       throw new BadRequestException('Payment status can only be updated on POSTED entries');
     await this.assertPeriodNotLocked(this.entryDate(entry.docDate ?? entry.postedAt));
-    const old = entry.paymentStatus;
-    const updated = await this.revRepo.save({ ...entry, paymentStatus: dto.paymentStatus, updatedBy: actorId });
+    this.assertPaymentMethod(dto.paymentStatus, dto.paymentMethod);
+    const old = {
+      paymentStatus: entry.paymentStatus,
+      paymentMethod: entry.paymentMethod,
+      paymentAccountRef: entry.paymentAccountRef,
+    };
+    const paymentPatch = this.paymentPatch(dto);
+    const updated = await this.revRepo.save({ ...entry, ...paymentPatch, updatedBy: actorId });
     this.auditLogs.logAsync({
       entityName: 'RevenueEntry',
       entityId: id,
       action: 'PAYMENT_STATUS_CHANGE',
       userId: actorId,
-      oldValues: { paymentStatus: old },
-      newValues: { paymentStatus: dto.paymentStatus },
+      oldValues: old,
+      newValues: paymentPatch,
     });
     return updated;
   }
@@ -371,15 +377,21 @@ export class AccountingService {
     if (entry.status !== AccountingStatus.POSTED)
       throw new BadRequestException('Payment status can only be updated on POSTED entries');
     await this.assertPeriodNotLocked(this.entryDate(entry.docDate ?? entry.postedAt));
-    const old = entry.paymentStatus;
-    const updated = await this.costRepo.save({ ...entry, paymentStatus: dto.paymentStatus, updatedBy: actorId });
+    this.assertPaymentMethod(dto.paymentStatus, dto.paymentMethod);
+    const old = {
+      paymentStatus: entry.paymentStatus,
+      paymentMethod: entry.paymentMethod,
+      paymentAccountRef: entry.paymentAccountRef,
+    };
+    const paymentPatch = this.paymentPatch(dto);
+    const updated = await this.costRepo.save({ ...entry, ...paymentPatch, updatedBy: actorId });
     this.auditLogs.logAsync({
       entityName: 'CostEntry',
       entityId: id,
       action: 'PAYMENT_STATUS_CHANGE',
       userId: actorId,
-      oldValues: { paymentStatus: old },
-      newValues: { paymentStatus: dto.paymentStatus },
+      oldValues: old,
+      newValues: paymentPatch,
     });
     return updated;
   }
@@ -487,7 +499,14 @@ export class AccountingService {
       }
       await this.assertPeriodNotLocked(this.entryDate(dto.paymentDate ?? entry.docDate ?? entry.postedAt));
       const paymentStatus = Number(dto.amount) >= Number(entry.localAmount) ? PaymentStatus.PAID : PaymentStatus.PARTIAL;
-      return em.save(RevenueEntry, { ...entry, paymentStatus, updatedBy: actorId });
+      this.assertPaymentMethod(paymentStatus, dto.method);
+      return em.save(RevenueEntry, {
+        ...entry,
+        paymentStatus,
+        paymentMethod: dto.method,
+        paymentAccountRef: dto.accountRef,
+        updatedBy: actorId,
+      });
     });
     this.auditLogs.logAsync({
       entityName: 'RevenueEntry',
@@ -500,6 +519,7 @@ export class AccountingService {
         method: dto.method,
         accountRef: dto.accountRef,
         paymentStatus: updated.paymentStatus,
+        paymentMethod: updated.paymentMethod,
       },
     });
     return updated;
@@ -515,7 +535,14 @@ export class AccountingService {
       }
       await this.assertPeriodNotLocked(this.entryDate(dto.paymentDate ?? entry.docDate ?? entry.postedAt));
       const paymentStatus = Number(dto.amount) >= Number(entry.localAmount) ? PaymentStatus.PAID : PaymentStatus.PARTIAL;
-      return em.save(CostEntry, { ...entry, paymentStatus, updatedBy: actorId });
+      this.assertPaymentMethod(paymentStatus, dto.method);
+      return em.save(CostEntry, {
+        ...entry,
+        paymentStatus,
+        paymentMethod: dto.method,
+        paymentAccountRef: dto.accountRef,
+        updatedBy: actorId,
+      });
     });
     this.auditLogs.logAsync({
       entityName: 'CostEntry',
@@ -528,6 +555,7 @@ export class AccountingService {
         method: dto.method,
         accountRef: dto.accountRef,
         paymentStatus: updated.paymentStatus,
+        paymentMethod: updated.paymentMethod,
       },
     });
     return updated;
@@ -562,6 +590,28 @@ export class AccountingService {
         totalAmount: Number(r.totalAmount ?? 0),
         count: Number(r.count ?? 0),
       })),
+    };
+  }
+
+  private assertPaymentMethod(paymentStatus: PaymentStatus, paymentMethod?: PaymentMethod) {
+    if ([PaymentStatus.PAID, PaymentStatus.PARTIAL].includes(paymentStatus) && !paymentMethod) {
+      throw new BadRequestException('Payment method is required for paid or partial entries');
+    }
+  }
+
+  private paymentPatch(dto: UpdatePaymentStatusDto) {
+    if (dto.paymentStatus === PaymentStatus.UNPAID) {
+      return {
+        paymentStatus: dto.paymentStatus,
+        paymentMethod: null,
+        paymentAccountRef: null,
+      };
+    }
+
+    return {
+      paymentStatus: dto.paymentStatus,
+      paymentMethod: dto.paymentMethod,
+      paymentAccountRef: dto.accountRef || null,
     };
   }
 

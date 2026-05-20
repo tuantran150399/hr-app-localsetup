@@ -1,6 +1,6 @@
 ﻿import { Entity, Column } from 'typeorm';
 import { BaseEntity } from './base.entity';
-import { AccountingStatus, PaymentStatus } from './revenue-entry.entity';
+import { AccountingStatus, PaymentMethod, PaymentStatus } from './revenue-entry.entity';
 
 @Entity('cost_entries')
 export class CostEntry extends BaseEntity {
@@ -40,6 +40,17 @@ export class CostEntry extends BaseEntity {
     default: PaymentStatus.UNPAID,
   })
   paymentStatus: PaymentStatus;
+
+  @Column({
+    name: 'payment_method',
+    type: 'enum',
+    enum: PaymentMethod,
+    nullable: true,
+  })
+  paymentMethod: PaymentMethod;
+
+  @Column({ name: 'payment_account_ref', length: 100, nullable: true })
+  paymentAccountRef: string;
 
   @Column({ name: 'ref_number', length: 100, nullable: true })
   refNumber: string;

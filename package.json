@@ -19,6 +19,7 @@
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
     "test": "jest",
     "e2e": "ts-node scripts/e2e-workflow.ts",
+    "e2e:business-workflow": "ts-node scripts/e2e-business-workflow.ts",
     "deploy:zip": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-deploy-zip.ps1"
   },
   "keywords": [],

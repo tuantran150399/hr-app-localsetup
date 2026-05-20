@@ -10,11 +10,26 @@ export enum PaymentRequestStatus {
 
 @Entity('payment_requests')
 export class PaymentRequest extends BaseEntity {
+  @Column({ name: 'branch_id', nullable: true })
+  branchId: number;
+
   @Column({ name: 'job_id', nullable: true })
   jobId: number;
 
   @Column({ name: 'vendor_id' })
   vendorId: number;
+
+  @Column({ name: 'is_charge_on_behalf', default: false })
+  isChargeOnBehalf: boolean;
+
+  @Column({ name: 'charge_to_partner_id', nullable: true })
+  chargeToPartnerId: number;
+
+  @Column({ name: 'cob_entry_id', nullable: true })
+  cobEntryId: number;
+
+  @Column({ name: 'receivable_entry_id', nullable: true })
+  receivableEntryId: number;
 
   @Column({ length: 10, default: 'VND' })
   currency: string;

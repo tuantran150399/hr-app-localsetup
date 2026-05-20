@@ -1,9 +1,14 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Min, ValidateIf } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 import { PaymentRequestStatus } from '../../../models/payment-request.entity';
 
 export class CreatePaymentRequestDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  branchId?: number;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -12,6 +17,16 @@ export class CreatePaymentRequestDto {
   @Type(() => Number)
   @IsInt()
   vendorId: number;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  isChargeOnBehalf?: boolean;
+
+  @ValidateIf((dto) => dto.isChargeOnBehalf)
+  @Type(() => Number)
+  @IsInt()
+  chargeToPartnerId?: number;
 
   @IsOptional()
   @IsString()
@@ -37,6 +52,11 @@ export class RejectPaymentRequestDto {
 }
 
 export class PaymentRequestFilterDto extends PaginationDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  branchId?: number;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

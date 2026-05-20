@@ -21,6 +21,18 @@ export class ReportsService {
     return { ...filter, branchId: getScopedBranchId(actor, filter.branchId) };
   }
 
+  private async requireJobFilter(filter: ReportFilterDto) {
+    if (!filter.jobId) {
+      throw new BadRequestException('Job is required for debt statistics');
+    }
+
+    const job = await this.jobRepo.findOne({ where: { id: filter.jobId } });
+    if (!job || (filter.branchId && job.branchId !== filter.branchId)) {
+      throw new BadRequestException('Job not found');
+    }
+    return job;
+  }
+
   // ─── Job profit ────────────────────────────────────────────────────────────
 
   /** Profit summary for a single job (POSTED entries only). */
@@ -46,7 +58,7 @@ export class ReportsService {
    */
   async revenueByBranch(filter: ReportFilterDto, actor?: AuthenticatedUser) {
     filter = this.applyBranchScope(filter, actor);
-    const { dateFrom, dateTo } = filter;
+    const { dateFrom, dateTo, jobId } = filter;
 
     const revQb = this.revRepo
       .createQueryBuilder('r')
@@ -56,6 +68,7 @@ export class ReportsService {
       .where('r.status = :s', { s: AccountingStatus.POSTED });
     if (dateFrom) revQb.andWhere('r.createdAt >= :dateFrom', { dateFrom });
     if (dateTo) revQb.andWhere('r.createdAt <= :dateTo', { dateTo });
+    if (jobId) revQb.andWhere('j.id = :jobId', { jobId });
     if (filter.branchId) revQb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
     revQb.groupBy('j.branchId');
 
@@ -67,6 +80,7 @@ export class ReportsService {
       .where('c.status = :s', { s: AccountingStatus.POSTED });
     if (dateFrom) costQb.andWhere('c.createdAt >= :dateFrom', { dateFrom });
     if (dateTo) costQb.andWhere('c.createdAt <= :dateTo', { dateTo });
+    if (jobId) costQb.andWhere('j.id = :jobId', { jobId });
     if (filter.branchId) costQb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
     costQb.groupBy('j.branchId');
 
@@ -91,7 +105,7 @@ export class ReportsService {
 
   async revenueByCustomer(filter: ReportFilterDto, actor?: AuthenticatedUser) {
     filter = this.applyBranchScope(filter, actor);
-    const { dateFrom, dateTo } = filter;
+    const { dateFrom, dateTo, jobId } = filter;
 
     const revQb = this.revRepo
       .createQueryBuilder('r')
@@ -101,6 +115,7 @@ export class ReportsService {
       .where('r.status = :s', { s: AccountingStatus.POSTED });
     if (dateFrom) revQb.andWhere('r.createdAt >= :dateFrom', { dateFrom });
     if (dateTo) revQb.andWhere('r.createdAt <= :dateTo', { dateTo });
+    if (jobId) revQb.andWhere('j.id = :jobId', { jobId });
     if (filter.partnerId) revQb.andWhere('j.partnerId = :partnerId', { partnerId: filter.partnerId });
     revQb.groupBy('j.partnerId');
 
@@ -112,6 +127,7 @@ export class ReportsService {
       .where('c.status = :s', { s: AccountingStatus.POSTED });
     if (dateFrom) costQb.andWhere('c.createdAt >= :dateFrom', { dateFrom });
     if (dateTo) costQb.andWhere('c.createdAt <= :dateTo', { dateTo });
+    if (jobId) costQb.andWhere('j.id = :jobId', { jobId });
     if (filter.partnerId) costQb.andWhere('j.partnerId = :partnerId', { partnerId: filter.partnerId });
     costQb.groupBy('j.partnerId');
 
@@ -211,6 +227,7 @@ export class ReportsService {
       .where(`${alias}.status = :status`, { status: AccountingStatus.POSTED });
     if (filter.dateFrom) qb.andWhere(`${dateExpr} >= :dateFrom`, { dateFrom: filter.dateFrom });
     if (filter.dateTo) qb.andWhere(`${dateExpr} <= :dateTo`, { dateTo: filter.dateTo });
+    if (filter.jobId) qb.andWhere('j.id = :jobId', { jobId: filter.jobId });
     if (filter.branchId) qb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
     if (filter.partnerId) qb.andWhere('j.partnerId = :partnerId', { partnerId: filter.partnerId });
     if (paymentStatuses?.length) qb.andWhere(`${alias}.paymentStatus IN (:...paymentStatuses)`, { paymentStatuses });
@@ -272,6 +289,7 @@ export class ReportsService {
       .where(`${alias}.status = :status`, { status: AccountingStatus.POSTED });
     if (filter.dateFrom) qb.andWhere(`${dateExpr} >= :dateFrom`, { dateFrom: filter.dateFrom });
     if (filter.dateTo) qb.andWhere(`${dateExpr} <= :dateTo`, { dateTo: filter.dateTo });
+    if (filter.jobId) qb.andWhere('j.id = :jobId', { jobId: filter.jobId });
     if (filter.branchId) qb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
     if (filter.partnerId) qb.andWhere('j.partnerId = :partnerId', { partnerId: filter.partnerId });
     qb.groupBy(groupColumn).addGroupBy(labelColumns[0]);
@@ -288,6 +306,7 @@ export class ReportsService {
       .addSelect('COUNT(j.id)', 'count');
     if (filter.dateFrom) qb.andWhere('j.createdAt >= :dateFrom', { dateFrom: filter.dateFrom });
     if (filter.dateTo) qb.andWhere('j.createdAt <= :dateTo', { dateTo: filter.dateTo });
+    if (filter.jobId) qb.andWhere('j.id = :jobId', { jobId: filter.jobId });
     if (filter.branchId) qb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
     qb.groupBy('j.status');
     const rows = await qb.getRawMany();
@@ -299,6 +318,7 @@ export class ReportsService {
   /** Outstanding (UNPAID + PARTIAL) posted revenue entries = receivables */
   async receivableSummary(filter: ReportFilterDto, actor?: AuthenticatedUser) {
     filter = this.applyBranchScope(filter, actor);
+    await this.requireJobFilter(filter);
     const qb = this.revRepo.createQueryBuilder('r')
       .innerJoin(Job, 'j', 'j.id = r.jobId')
       .select('r.paymentStatus', 'paymentStatus')
@@ -308,6 +328,7 @@ export class ReportsService {
       .andWhere('r.paymentStatus IN (:...ps)', { ps: [PaymentStatus.UNPAID, PaymentStatus.PARTIAL] });
     if (filter.dateFrom) qb.andWhere('r.createdAt >= :dateFrom', { dateFrom: filter.dateFrom });
     if (filter.dateTo) qb.andWhere('r.createdAt <= :dateTo', { dateTo: filter.dateTo });
+    qb.andWhere('j.id = :jobId', { jobId: filter.jobId });
     if (filter.branchId) qb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
     if (filter.partnerId) qb.andWhere('j.partnerId = :partnerId', { partnerId: filter.partnerId });
     qb.groupBy('r.paymentStatus');
@@ -320,6 +341,7 @@ export class ReportsService {
   /** Outstanding posted cost entries = payables */
   async payableSummary(filter: ReportFilterDto, actor?: AuthenticatedUser) {
     filter = this.applyBranchScope(filter, actor);
+    await this.requireJobFilter(filter);
     const qb = this.costRepo.createQueryBuilder('c')
       .innerJoin(Job, 'j', 'j.id = c.jobId')
       .select('c.paymentStatus', 'paymentStatus')
@@ -329,6 +351,7 @@ export class ReportsService {
       .andWhere('c.paymentStatus IN (:...ps)', { ps: [PaymentStatus.UNPAID, PaymentStatus.PARTIAL] });
     if (filter.dateFrom) qb.andWhere('c.createdAt >= :dateFrom', { dateFrom: filter.dateFrom });
     if (filter.dateTo) qb.andWhere('c.createdAt <= :dateTo', { dateTo: filter.dateTo });
+    qb.andWhere('j.id = :jobId', { jobId: filter.jobId });
     if (filter.branchId) qb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
     qb.groupBy('c.paymentStatus');
     const rows = await qb.getRawMany();
@@ -344,6 +367,7 @@ export class ReportsService {
    */
   async overdueReceivables(filter: ReportFilterDto, actor?: AuthenticatedUser) {
     filter = this.applyBranchScope(filter, actor);
+    await this.requireJobFilter(filter);
     const today = new Date().toISOString().split('T')[0];
     const qb = this.revRepo.createQueryBuilder('r')
       .innerJoin(Job, 'j', 'j.id = r.jobId')
@@ -353,6 +377,7 @@ export class ReportsService {
       .andWhere('r.dueDate < :today', { today })
       .orderBy('r.dueDate', 'ASC');
     if (filter.branchId) qb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
+    qb.andWhere('j.id = :jobId', { jobId: filter.jobId });
     if (filter.partnerId) qb.andWhere('j.partnerId = :partnerId', { partnerId: filter.partnerId });
     const rows = await qb.getMany();
     const total = rows.reduce((s, r) => s + Number(r.localAmount), 0);
@@ -361,6 +386,7 @@ export class ReportsService {
 
   async overduePayables(filter: ReportFilterDto, actor?: AuthenticatedUser) {
     filter = this.applyBranchScope(filter, actor);
+    await this.requireJobFilter(filter);
     const today = new Date().toISOString().split('T')[0];
     const qb = this.costRepo.createQueryBuilder('c')
       .innerJoin(Job, 'j', 'j.id = c.jobId')
@@ -370,6 +396,7 @@ export class ReportsService {
       .andWhere('c.dueDate < :today', { today })
       .orderBy('c.dueDate', 'ASC');
     if (filter.branchId) qb.andWhere('j.branchId = :branchId', { branchId: filter.branchId });
+    qb.andWhere('j.id = :jobId', { jobId: filter.jobId });
     const rows = await qb.getMany();
     const total = rows.reduce((s, c) => s + Number(c.localAmount), 0);
     return { count: rows.length, totalAmount: total, data: rows };

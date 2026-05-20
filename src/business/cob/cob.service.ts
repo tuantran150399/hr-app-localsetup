@@ -31,6 +31,10 @@ export class CobService {
   }
 
   async createCob(dto: CreateCobDto, userId: number) {
+    if (!dto.jobId) {
+      throw new BadRequestException('Job is required for charge-on-behalf');
+    }
+
     const entry = this.cobRepo.create({
       type: CobType.CHARGE_ON_BEHALF,
       partnerId: dto.partnerId,
@@ -65,6 +69,12 @@ export class CobService {
     if (!cost) throw new NotFoundException('Cost entry not found');
     if (cost.status !== AccountingStatus.POSTED) {
       throw new BadRequestException('Only POSTED cost entries can be marked as COB');
+    }
+    const existing = await this.cobRepo.findOne({
+      where: { costEntryId: costId, type: CobType.CHARGE_ON_BEHALF },
+    });
+    if (existing) {
+      throw new BadRequestException('This cost entry is already marked as COB');
     }
 
     const entry = this.cobRepo.create({
@@ -149,8 +159,11 @@ export class CobService {
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
   private async createAutoReceivable(cobEntry: CobEntry, userId: number): Promise<RevenueEntry> {
+    if (!cobEntry.jobId) {
+      throw new BadRequestException('Job is required to create a COB receivable');
+    }
     const receivable = this.revenueRepo.create({
-      jobId: cobEntry.jobId || 0,
+      jobId: cobEntry.jobId,
       description: `Receivable from COB #${cobEntry.id}: ${cobEntry.description || ''}`,
       currency: cobEntry.currency,
       amount: cobEntry.amount,

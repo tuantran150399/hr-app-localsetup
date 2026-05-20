@@ -13,26 +13,26 @@ export class PaymentRequestsController {
 
   @RequirePermission('accounting:create')
   @Post()
-  create(@Body() dto: CreatePaymentRequestDto, @CurrentUser() user: { id: number }) {
-    return this.svc.create(dto, user.id);
+  create(@Body() dto: CreatePaymentRequestDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.create(dto, user);
   }
 
   @RequirePermission('accounting:view')
   @Get()
-  findAll(@Query() filter: PaymentRequestFilterDto) {
-    return this.svc.findAll(filter);
+  findAll(@Query() filter: PaymentRequestFilterDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.findAll(filter, user);
   }
 
   @RequirePermission('accounting:view')
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.findOne(id, user);
   }
 
   @RequirePermission('accounting:post')
   @Patch(':id/approve')
-  approve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
-    return this.svc.approve(id, user.id);
+  approve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.approve(id, user);
   }
 
   @RequirePermission('accounting:post')
@@ -40,14 +40,14 @@ export class PaymentRequestsController {
   reject(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: RejectPaymentRequestDto,
-    @CurrentUser() user: { id: number },
+    @CurrentUser() user: { id: number; branchId?: number; roles?: string[] },
   ) {
-    return this.svc.reject(id, dto.reason, user.id);
+    return this.svc.reject(id, dto.reason, user);
   }
 
   @RequirePermission('accounting:post')
   @Patch(':id/final-approve')
-  finalApprove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
-    return this.svc.finalApprove(id, user.id);
+  finalApprove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.finalApprove(id, user);
   }
 }

@@ -1,6 +1,6 @@
 ﻿import { IsNotEmpty, IsOptional, IsString, IsNumber, IsInt, Min, IsEnum, IsDateString, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
-import { PaymentStatus } from '../../../models/revenue-entry.entity';
+import { PaymentMethod, PaymentStatus } from '../../../models/revenue-entry.entity';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class CreateEntryDto {
@@ -35,6 +35,8 @@ export class UpdateEntryDto {
 
 export class UpdatePaymentStatusDto {
   @IsEnum(PaymentStatus) paymentStatus: PaymentStatus;
+  @IsOptional() @IsEnum(PaymentMethod) paymentMethod?: PaymentMethod;
+  @IsOptional() @IsString() accountRef?: string;
 }
 
 export class VoidEntryDto {
@@ -77,8 +79,8 @@ export class RecordPaymentDto {
   paymentDate?: string;
 
   @IsOptional()
-  @IsString()
-  method?: string;
+  @IsEnum(PaymentMethod)
+  method?: PaymentMethod;
 
   @IsOptional()
   @IsString()

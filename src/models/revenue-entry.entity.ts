@@ -13,6 +13,11 @@ export enum PaymentStatus {
   PAID = 'PAID',
 }
 
+export enum PaymentMethod {
+  CASH = 'CASH',
+  BANK = 'BANK',
+}
+
 @Entity('revenue_entries')
 export class RevenueEntry extends BaseEntity {
   @Column({ name: 'job_id' })
@@ -48,6 +53,17 @@ export class RevenueEntry extends BaseEntity {
     default: PaymentStatus.UNPAID,
   })
   paymentStatus: PaymentStatus;
+
+  @Column({
+    name: 'payment_method',
+    type: 'enum',
+    enum: PaymentMethod,
+    nullable: true,
+  })
+  paymentMethod: PaymentMethod;
+
+  @Column({ name: 'payment_account_ref', length: 100, nullable: true })
+  paymentAccountRef: string;
 
   @Column({ name: 'ref_number', length: 100, nullable: true })
   refNumber: string;
