@@ -18,7 +18,7 @@ export class PricingService {
 
   async create(dto: CreateServicePriceDto, actorId: number) {
     await this.assertPartner(dto.partnerId);
-    const price = await this.repo.save(this.repo.create({ ...dto, createdBy: actorId, updatedBy: actorId }));
+    const price = await this.repo.save(this.repo.create({ ...this.normalizePriceDto(dto), createdBy: actorId, updatedBy: actorId }));
     this.auditLogs.logAsync({ entityName: 'ServicePrice', entityId: price.id, action: 'CREATE', userId: actorId, newValues: price });
     return price;
   }
@@ -46,7 +46,7 @@ export class PricingService {
   async update(id: number, dto: UpdateServicePriceDto, actorId: number) {
     const current = await this.findOne(id);
     await this.assertPartner(dto.partnerId);
-    const updated = await this.repo.save({ ...current, ...dto, updatedBy: actorId });
+    const updated = await this.repo.save({ ...current, ...this.normalizePriceDto(dto), updatedBy: actorId });
     this.auditLogs.logAsync({ entityName: 'ServicePrice', entityId: id, action: 'UPDATE', userId: actorId, oldValues: current, newValues: updated });
     return updated;
   }
@@ -60,25 +60,76 @@ export class PricingService {
 
   async suggest(dto: PriceSuggestionDto) {
     const serviceDate = dto.serviceDate ?? new Date().toISOString().slice(0, 10);
-    const qb = this.repo.createQueryBuilder('p')
+    const baseQb = () => this.repo.createQueryBuilder('p')
       .where('p.serviceType = :serviceType', { serviceType: dto.serviceType })
       .andWhere('p.isActive = true')
-      .andWhere('(p.partnerId = :partnerId OR p.partnerId IS NULL)', { partnerId: dto.partnerId ?? 0 })
+      .andWhere('p.partnerId = :partnerId', { partnerId: dto.partnerId ?? 0 })
       .andWhere('(p.effectiveFrom IS NULL OR p.effectiveFrom <= :serviceDate)', { serviceDate })
       .andWhere('(p.effectiveTo IS NULL OR p.effectiveTo >= :serviceDate)', { serviceDate });
-    if (dto.shipmentMode) qb.andWhere('(p.shipmentMode = :shipmentMode OR p.shipmentMode IS NULL)', { shipmentMode: dto.shipmentMode });
-    if (dto.routeFrom) qb.andWhere('(p.routeFrom = :routeFrom OR p.routeFrom IS NULL)', { routeFrom: dto.routeFrom });
-    if (dto.routeTo) qb.andWhere('(p.routeTo = :routeTo OR p.routeTo IS NULL)', { routeTo: dto.routeTo });
-    if (dto.quantity !== undefined) {
-      qb.andWhere('(p.minQuantity IS NULL OR p.minQuantity <= :quantity)', { quantity: dto.quantity })
-        .andWhere('(p.maxQuantity IS NULL OR p.maxQuantity >= :quantity)', { quantity: dto.quantity });
+    const addQuantityFilter = (qb: ReturnType<typeof baseQb>) => {
+      if (dto.quantity !== undefined) {
+        qb.andWhere('(p.minQuantity IS NULL OR p.minQuantity <= :quantity)', { quantity: dto.quantity })
+          .andWhere('(p.maxQuantity IS NULL OR p.maxQuantity >= :quantity)', { quantity: dto.quantity });
+      }
+      return qb;
+    };
+
+    const routeFrom = this.normalizeText(dto.routeFrom);
+    const routeTo = this.normalizeText(dto.routeTo);
+    if (routeFrom && routeTo) {
+      const routePrice = await addQuantityFilter(baseQb())
+        .andWhere('LOWER(TRIM(p.routeFrom)) = :routeFrom', { routeFrom })
+        .andWhere('LOWER(TRIM(p.routeTo)) = :routeTo', { routeTo })
+        .orderBy('p.effectiveFrom', 'DESC')
+        .getOne();
+      if (routePrice) return routePrice;
     }
-    qb.orderBy('p.partnerId IS NULL', 'ASC')
-      .addOrderBy('p.shipmentMode IS NULL', 'ASC')
-      .addOrderBy('p.routeFrom IS NULL', 'ASC')
-      .addOrderBy('p.routeTo IS NULL', 'ASC')
+
+    return addQuantityFilter(baseQb())
+      .andWhere('(p.routeFrom IS NULL OR TRIM(p.routeFrom) = \'\')')
+      .andWhere('(p.routeTo IS NULL OR TRIM(p.routeTo) = \'\')')
+      .orderBy('p.effectiveFrom', 'DESC')
+      .getOne();
+  }
+
+  async lookupBestMatches(filter: {
+    partnerId?: number;
+    routeFrom?: string;
+    routeTo?: string;
+    shipmentMode?: string;
+    serviceDate?: string;
+  }) {
+    const serviceDate = filter.serviceDate ?? new Date().toISOString().slice(0, 10);
+    const routeFrom = this.normalizeText(filter.routeFrom);
+    const routeTo = this.normalizeText(filter.routeTo);
+    const baseQb = () => this.repo.createQueryBuilder('p')
+      .where('p.isActive = true')
+      .andWhere('p.partnerId = :partnerId', { partnerId: filter.partnerId ?? 0 })
+      .andWhere('(p.effectiveFrom IS NULL OR p.effectiveFrom <= :serviceDate)', { serviceDate })
+      .andWhere('(p.effectiveTo IS NULL OR p.effectiveTo >= :serviceDate)', { serviceDate })
+      .orderBy('p.serviceType', 'ASC')
       .addOrderBy('p.effectiveFrom', 'DESC');
-    return qb.getOne();
+
+    if (!filter.partnerId) {
+      return { data: [], meta: { total: 0, page: 1, limit: 0, totalPages: 1 } };
+    }
+
+    let items: ServicePrice[] = [];
+    if (routeFrom && routeTo) {
+      items = await baseQb()
+        .andWhere('LOWER(TRIM(p.routeFrom)) = :routeFrom', { routeFrom })
+        .andWhere('LOWER(TRIM(p.routeTo)) = :routeTo', { routeTo })
+        .getMany();
+    }
+
+    if (!items.length) {
+      items = await baseQb()
+        .andWhere('(p.routeFrom IS NULL OR TRIM(p.routeFrom) = \'\')')
+        .andWhere('(p.routeTo IS NULL OR TRIM(p.routeTo) = \'\')')
+        .getMany();
+    }
+
+    return { data: items, meta: { total: items.length, page: 1, limit: items.length, totalPages: 1 } };
   }
 
   async importPrices(fileBuffer: Buffer, actorId: number) {
@@ -179,4 +230,28 @@ export class PricingService {
     const normalized = String(value ?? '').trim();
     return normalized ? normalized : undefined;
   }
+
+  private normalizePriceDto<T extends CreateServicePriceDto | UpdateServicePriceDto>(dto: T): T {
+    return {
+      ...dto,
+      routeFrom: this.normalizeNullableString(dto.routeFrom),
+      routeTo: this.normalizeNullableString(dto.routeTo),
+      shipmentMode: this.normalizeNullableString(dto.shipmentMode),
+      unit: this.normalizeNullableString(dto.unit),
+      currency: this.normalizeNullableString(dto.currency),
+      effectiveFrom: this.normalizeNullableString(dto.effectiveFrom),
+      effectiveTo: this.normalizeNullableString(dto.effectiveTo),
+      notes: this.normalizeNullableString(dto.notes),
+    };
+  }
+
+  private normalizeNullableString(value?: string): string | undefined {
+    const normalized = String(value ?? '').trim();
+    return normalized ? normalized : undefined;
+  }
+
+  private normalizeText(value?: string): string {
+    return String(value ?? '').trim().toLowerCase();
+  }
+
 }

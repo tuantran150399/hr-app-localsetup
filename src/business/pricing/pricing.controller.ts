@@ -32,6 +32,18 @@ export class PricingController {
     return this.svc.suggest(dto);
   }
 
+  @RequirePermission('pricing:view')
+  @Get('lookup')
+  lookup(@Query() query: { partnerId?: string; routeFrom?: string; routeTo?: string; shipmentMode?: string; serviceDate?: string }) {
+    return this.svc.lookupBestMatches({
+      partnerId: query.partnerId ? Number(query.partnerId) : undefined,
+      routeFrom: query.routeFrom,
+      routeTo: query.routeTo,
+      shipmentMode: query.shipmentMode,
+      serviceDate: query.serviceDate,
+    });
+  }
+
   @RequirePermission('pricing:manage')
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))

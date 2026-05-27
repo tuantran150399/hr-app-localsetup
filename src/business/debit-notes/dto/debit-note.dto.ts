@@ -65,4 +65,5 @@ export class DebitNoteFilterDto {
   @IsOptional() @IsString() status?: string;
   @IsOptional() @Transform(({ value }) => parseInt(value)) partnerId?: number;
   @IsOptional() @Transform(({ value }) => parseInt(value)) jobId?: number;
+  @IsOptional() @Transform(({ value }) => parseInt(value)) branchId?: number;
 }

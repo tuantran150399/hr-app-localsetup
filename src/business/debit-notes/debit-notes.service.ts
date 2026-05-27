@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { DebitNote, DebitNoteStatus } from '../../models/debit-note.entity';
@@ -9,6 +9,7 @@ import { AccountingStatus, PaymentStatus, RevenueEntry } from '../../models/reve
 import { CreateDebitNoteDto, UpdateDebitNoteDto, VoidDebitNoteDto, DebitNoteFilterDto, RecordDebitNotePaymentDto } from './dto/debit-note.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
+import { assertBranchAccess, AuthenticatedUser, getScopedBranchId } from '../../common/auth/branch-scope.util';
 
 @Injectable()
 export class DebitNotesService {
@@ -22,11 +23,20 @@ export class DebitNotesService {
     private auditSvc: AuditLogsService,
   ) {}
 
+  private enforceBranchAccess(user: AuthenticatedUser | undefined, branchId?: number | null) {
+    try {
+      assertBranchAccess(user, branchId);
+    } catch {
+      throw new ForbiddenException('You cannot access debit notes from another branch');
+    }
+  }
+
   // ─── CRUD ────────────────────────────────────────────────────────────────
 
-  async create(dto: CreateDebitNoteDto, userId: number) {
+  async create(dto: CreateDebitNoteDto, actor: AuthenticatedUser) {
     const saved = await this.dataSource.transaction(async (em) => {
       const job = await this.assertJob(dto.jobId);
+      this.enforceBranchAccess(actor, job.branchId);
       const totalAmount = this.calculateLineTotal(dto.lineItems, dto.amount);
       const note = await em.save(DebitNote, em.create(DebitNote, {
         partnerId: job.partnerId,
@@ -42,26 +52,29 @@ export class DebitNotesService {
         amount: totalAmount,
         status: DebitNoteStatus.POSTED,
         postedAt: new Date(),
-        postedBy: userId,
-        createdBy: userId,
-        updatedBy: userId,
+        postedBy: actor.id,
+        createdBy: actor.id,
+        updatedBy: actor.id,
       }));
 
       await this.saveLineItems(em, note.id, dto.lineItems || [], note.currency);
-      return this.syncReceivable(em, note, userId);
+      return this.syncReceivable(em, note, actor.id);
     });
 
     await this.auditSvc.log({
-      entityName: 'DebitNote', entityId: saved.id, action: 'CREATE', userId,
+      entityName: 'DebitNote', entityId: saved.id, action: 'CREATE', userId: actor.id,
       newValues: { partnerId: saved.partnerId, jobId: saved.jobId, amount: saved.amount, lineCount: dto.lineItems?.length || 0, receivableEntryId: saved.receivableEntryId },
     });
 
     return saved;
   }
 
-  async findAll(filter: DebitNoteFilterDto = {}) {
-    const { page = 1, limit = 50, status, partnerId, jobId } = filter;
-    const qb = this.noteRepo.createQueryBuilder('dn');
+  async findAll(filter: DebitNoteFilterDto = {}, actor?: AuthenticatedUser) {
+    const { page = 1, limit = 50, status, partnerId, jobId, branchId } = filter;
+    const scopedBranchId = getScopedBranchId(actor, branchId);
+    const qb = this.noteRepo.createQueryBuilder('dn')
+      .innerJoin(Job, 'j', 'j.id = dn.jobId');
+    if (scopedBranchId) qb.andWhere('j.branchId = :branchId', { branchId: scopedBranchId });
     if (status) qb.andWhere('dn.status = :status', { status });
     if (partnerId) qb.andWhere('dn.partnerId = :partnerId', { partnerId });
     if (jobId) qb.andWhere('dn.jobId = :jobId', { jobId });
@@ -69,21 +82,24 @@ export class DebitNotesService {
     return paginate(await qb.getManyAndCount(), page, limit);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, actor?: AuthenticatedUser) {
     const note = await this.noteRepo.findOne({ where: { id } });
     if (!note) throw new NotFoundException('Debit note not found');
+    await this.enforceNoteBranchAccess(note, actor);
     const lines = await this.lineRepo.find({ where: { debitNoteId: id }, order: { id: 'ASC' } });
     return { ...note, lineItems: lines };
   }
 
-  async update(id: number, dto: UpdateDebitNoteDto, userId: number) {
+  async update(id: number, dto: UpdateDebitNoteDto, actor: AuthenticatedUser) {
     const note = await this.findOneOrFail(id);
+    await this.enforceNoteBranchAccess(note, actor);
     if (![DebitNoteStatus.DRAFT, DebitNoteStatus.POSTED].includes(note.status) || note.paymentStatus !== PaymentStatus.UNPAID) {
       throw new BadRequestException('Only unpaid draft/posted debit notes can be edited');
     }
 
     return this.dataSource.transaction(async (em) => {
       const job = dto.jobId ? await this.assertJob(dto.jobId) : await this.assertJob(note.jobId);
+      this.enforceBranchAccess(actor, job.branchId);
       Object.assign(note, {
         partnerId: job.partnerId,
         jobId: job.id,
@@ -94,7 +110,7 @@ export class DebitNotesService {
         paymentMethod: dto.paymentMethod ?? note.paymentMethod,
         paymentAccountRef: dto.paymentAccountRef ?? note.paymentAccountRef,
         amount: dto.lineItems ? this.calculateLineTotal(dto.lineItems, dto.amount) : dto.amount ?? note.amount,
-        updatedBy: userId,
+        updatedBy: actor.id,
       });
 
       const saved = await em.save(DebitNote, note);
@@ -102,83 +118,88 @@ export class DebitNotesService {
         await em.delete(DebitNoteLine, { debitNoteId: id });
         await this.saveLineItems(em, id, dto.lineItems, saved.currency);
       }
-      return this.syncReceivable(em, saved, userId);
+      return this.syncReceivable(em, saved, actor.id);
     });
   }
 
-  async delete(id: number, userId: number) {
+  async delete(id: number, actor: AuthenticatedUser) {
     const note = await this.findOneOrFail(id);
+    await this.enforceNoteBranchAccess(note, actor);
     if (note.status !== DebitNoteStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT debit notes can be deleted');
     }
     await this.lineRepo.delete({ debitNoteId: id });
     await this.noteRepo.delete(id);
-    await this.auditSvc.log({ entityName: 'DebitNote', entityId: id, action: 'DELETE', userId });
+    await this.auditSvc.log({ entityName: 'DebitNote', entityId: id, action: 'DELETE', userId: actor.id });
     return { deleted: true };
   }
 
   // ─── Workflow ────────────────────────────────────────────────────────────
 
-  async post(id: number, userId: number) {
+  async post(id: number, actor: AuthenticatedUser) {
     const note = await this.findOneOrFail(id);
+    await this.enforceNoteBranchAccess(note, actor);
     if (note.status !== DebitNoteStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT debit notes can be posted');
     }
     note.status = DebitNoteStatus.POSTED;
     note.postedAt = new Date();
-    note.postedBy = userId;
-    note.updatedBy = userId;
+    note.postedBy = actor.id;
+    note.updatedBy = actor.id;
     const saved = await this.noteRepo.save(note);
-    await this.dataSource.transaction((em) => this.syncReceivable(em, saved, userId));
-    await this.auditSvc.log({ entityName: 'DebitNote', entityId: id, action: 'POST', userId });
-    return this.findOne(id);
+    await this.dataSource.transaction((em) => this.syncReceivable(em, saved, actor.id));
+    await this.auditSvc.log({ entityName: 'DebitNote', entityId: id, action: 'POST', userId: actor.id });
+    return this.findOne(id, actor);
   }
 
-  async send(id: number, userId: number) {
+  async send(id: number, actor: AuthenticatedUser) {
     const note = await this.findOneOrFail(id);
+    await this.enforceNoteBranchAccess(note, actor);
     if (note.status !== DebitNoteStatus.POSTED) {
       throw new BadRequestException('Only POSTED debit notes can be sent');
     }
     note.status = DebitNoteStatus.SENT;
     note.sentAt = new Date();
-    note.sentBy = userId;
-    note.updatedBy = userId;
-    await this.auditSvc.log({ entityName: 'DebitNote', entityId: id, action: 'SEND', userId });
+    note.sentBy = actor.id;
+    note.updatedBy = actor.id;
+    await this.auditSvc.log({ entityName: 'DebitNote', entityId: id, action: 'SEND', userId: actor.id });
     return this.noteRepo.save(note);
   }
 
-  async void(id: number, reason: string, userId: number) {
+  async void(id: number, reason: string, actor: AuthenticatedUser) {
     const note = await this.findOneOrFail(id);
+    await this.enforceNoteBranchAccess(note, actor);
     if (note.status === DebitNoteStatus.VOIDED) {
       throw new BadRequestException('Debit note is already voided');
     }
     const oldStatus = note.status;
     note.status = DebitNoteStatus.VOIDED;
     note.voidedAt = new Date();
-    note.voidedBy = userId;
+    note.voidedBy = actor.id;
     note.voidReason = reason;
-    note.updatedBy = userId;
+    note.updatedBy = actor.id;
     if (note.receivableEntryId) {
       await this.revenueRepo.update(note.receivableEntryId, {
         status: AccountingStatus.VOIDED,
         voidedAt: new Date(),
-        voidedBy: userId,
-        updatedBy: userId,
+        voidedBy: actor.id,
+        updatedBy: actor.id,
       });
     }
     await this.auditSvc.log({
-      entityName: 'DebitNote', entityId: id, action: 'VOID', userId,
+      entityName: 'DebitNote', entityId: id, action: 'VOID', userId: actor.id,
       oldValues: { status: oldStatus }, newValues: { status: 'VOIDED', reason },
     });
     return this.noteRepo.save(note);
   }
 
-  async recordPayment(id: number, dto: RecordDebitNotePaymentDto, userId: number) {
+  async recordPayment(id: number, dto: RecordDebitNotePaymentDto, actor: AuthenticatedUser) {
     const saved = await this.dataSource.transaction(async (em) => {
       const note = await em.findOne(DebitNote, { where: { id } });
       if (!note) throw new NotFoundException('Debit note not found');
+      await this.enforceNoteBranchAccess(note, actor);
       if (!note.receivableEntryId) {
-        await this.syncReceivable(em, note, userId);
+        await this.syncReceivable(em, note, actor.id);
       }
       const receivableId = note.receivableEntryId;
       const paidAmount = Number(note.paidAmount || 0) + Number(dto.amount || 0);
@@ -192,8 +213,8 @@ export class DebitNotesService {
         paymentAccountRef: dto.paymentAccountRef || null,
         paidAmount,
         paidAt,
-        paidBy: userId,
-        updatedBy: userId,
+        paidBy: actor.id,
+        updatedBy: actor.id,
       });
 
       if (receivableId) {
@@ -201,7 +222,7 @@ export class DebitNotesService {
           paymentStatus,
           paymentMethod: dto.paymentMethod,
           paymentAccountRef: dto.paymentAccountRef || null,
-          updatedBy: userId,
+          updatedBy: actor.id,
         });
       }
       return updated;
@@ -211,36 +232,25 @@ export class DebitNotesService {
       entityName: 'DebitNote',
       entityId: id,
       action: 'RECORD_PAYMENT',
-      userId,
+      userId: actor.id,
       newValues: { amount: dto.amount, paymentMethod: dto.paymentMethod, paymentStatus: saved.paymentStatus },
     });
-    return this.findOne(id);
+    return this.findOne(id, actor);
   }
 
   // ─── Pricing Lookup ──────────────────────────────────────────────────────
 
-  async lookupPricing(partnerId?: number, jobId?: number) {
+  async lookupPricing(partnerId?: number, jobId?: number, actor?: AuthenticatedUser) {
+    let selectedJob: Job | null = null;
     if (jobId) {
-      const job = await this.assertJob(jobId);
-      partnerId = job.partnerId || partnerId;
+      selectedJob = await this.assertJob(jobId);
+      this.enforceBranchAccess(actor, selectedJob.branchId);
+      partnerId = selectedJob.partnerId || partnerId;
     }
 
-    const qb = this.priceRepo.createQueryBuilder('p')
-      .where('p.isActive = :active', { active: true });
-
-    if (partnerId) {
-      // Match customer-specific OR general tariffs
-      qb.andWhere('(p.partnerId = :partnerId OR p.partnerId IS NULL)', { partnerId });
-    }
-
-    // Only include currently effective tariffs
-    qb.andWhere('(p.effectiveFrom IS NULL OR p.effectiveFrom <= CURDATE())')
-      .andWhere('(p.effectiveTo IS NULL OR p.effectiveTo >= CURDATE())');
-
-    qb.orderBy('p.partnerId', 'DESC') // Customer-specific first, then general
-      .addOrderBy('p.serviceType', 'ASC');
-
-    const items = await qb.getMany();
+    const origin = this.normalizeText(selectedJob?.origin || selectedJob?.pol);
+    const destination = this.normalizeText(selectedJob?.destination || selectedJob?.pod);
+    const items = partnerId ? await this.findPrioritizedCustomerPrices(partnerId, origin, destination) : [];
     return { data: items, meta: { total: items.length, page: 1, limit: items.length, totalPages: 1 } };
   }
 
@@ -250,6 +260,13 @@ export class DebitNotesService {
     const note = await this.noteRepo.findOne({ where: { id } });
     if (!note) throw new NotFoundException('Debit note not found');
     return note;
+  }
+
+  private async enforceNoteBranchAccess(note: DebitNote, actor?: AuthenticatedUser) {
+    if (!note.jobId) return;
+    const job = await this.jobRepo.findOne({ where: { id: note.jobId } });
+    if (!job || job.archivedAt) throw new BadRequestException(`Job #${note.jobId} not found`);
+    this.enforceBranchAccess(actor, job.branchId);
   }
 
   private async assertJob(jobId?: number): Promise<Job> {
@@ -318,5 +335,32 @@ export class DebitNotesService {
       await em.save(DebitNote, note);
     }
     return { ...note, receivableEntryId: receivable.id };
+  }
+
+  private normalizeText(value?: string): string {
+    return String(value ?? '').trim().toLowerCase();
+  }
+
+  private async findPrioritizedCustomerPrices(partnerId: number, origin: string, destination: string): Promise<ServicePrice[]> {
+    const baseQb = () => this.priceRepo.createQueryBuilder('p')
+      .where('p.isActive = :active', { active: true })
+      .andWhere('p.partnerId = :partnerId', { partnerId })
+      .andWhere('(p.effectiveFrom IS NULL OR p.effectiveFrom <= CURDATE())')
+      .andWhere('(p.effectiveTo IS NULL OR p.effectiveTo >= CURDATE())')
+      .orderBy('p.serviceType', 'ASC')
+      .addOrderBy('p.effectiveFrom', 'DESC');
+
+    if (origin && destination) {
+      const routePrices = await baseQb()
+        .andWhere('LOWER(TRIM(p.routeFrom)) = :origin', { origin })
+        .andWhere('LOWER(TRIM(p.routeTo)) = :destination', { destination })
+        .getMany();
+      if (routePrices.length) return routePrices;
+    }
+
+    return baseQb()
+      .andWhere('(p.routeFrom IS NULL OR TRIM(p.routeFrom) = \'\')')
+      .andWhere('(p.routeTo IS NULL OR TRIM(p.routeTo) = \'\')')
+      .getMany();
   }
 }
