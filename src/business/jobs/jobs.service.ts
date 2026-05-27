@@ -7,6 +7,7 @@ import { Partner } from '../../models/partner.entity';
 import { Branch } from '../../models/branch.entity';
 import { User } from '../../models/user.entity';
 import { RevenueEntry, AccountingStatus, PaymentStatus } from '../../models/revenue-entry.entity';
+import { CostEntry } from '../../models/cost-entry.entity';
 import { DebtPolicy } from '../../models/debt-policy.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CreateJobDto, UpdateJobDto, JobFilterDto, CreateMilestoneDto, UpdateMilestoneDto } from './dto/job.dto';
@@ -22,6 +23,7 @@ export class JobsService {
     @InjectRepository(Branch) private branchRepo: Repository<Branch>,
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(RevenueEntry) private revenueRepo: Repository<RevenueEntry>,
+    @InjectRepository(CostEntry) private costRepo: Repository<CostEntry>,
     @InjectRepository(DebtPolicy) private debtPolicyRepo: Repository<DebtPolicy>,
     private auditLogs: AuditLogsService,
   ) {}
@@ -166,7 +168,43 @@ export class JobsService {
     const job = await this.repo.findOne({ where: { id } });
     if (!job || job.archivedAt) throw new NotFoundException('Job not found');
     this.enforceBranchAccess(actor, job.branchId);
-    return job;
+    const [revenueEntries, costEntries] = await Promise.all([
+      this.revenueRepo.find({ where: { jobId: id }, order: { createdAt: 'ASC' } }),
+      this.costRepo.find({ where: { jobId: id }, order: { createdAt: 'ASC' } }),
+    ]);
+
+    const postedRevenue = revenueEntries.filter((entry) => entry.status === AccountingStatus.POSTED);
+    const postedCost = costEntries.filter((entry) => entry.status === AccountingStatus.POSTED);
+    const revenueTotal = postedRevenue.reduce((sum, entry) => sum + Number(entry.localAmount || entry.amount || 0), 0);
+    const costTotal = postedCost.reduce((sum, entry) => sum + Number(entry.localAmount || entry.amount || 0), 0);
+    const unpaidRevenueTotal = postedRevenue
+      .filter((entry) => entry.paymentStatus !== PaymentStatus.PAID)
+      .reduce((sum, entry) => sum + Number(entry.localAmount || entry.amount || 0), 0);
+    const paymentStatus =
+      postedRevenue.length === 0
+        ? PaymentStatus.UNPAID
+        : unpaidRevenueTotal <= 0
+          ? PaymentStatus.PAID
+          : unpaidRevenueTotal < revenueTotal
+            ? PaymentStatus.PARTIAL
+            : PaymentStatus.UNPAID;
+
+    return {
+      ...job,
+      revenueEntries,
+      costEntries,
+      profitSummary: {
+        revenue: revenueTotal,
+        cost: costTotal,
+        profit: revenueTotal - costTotal,
+        status: revenueTotal - costTotal >= 0 ? 'PROFIT' : 'LOSS',
+      },
+      paymentSummary: {
+        status: paymentStatus,
+        revenueTotal,
+        unpaidRevenueTotal,
+      },
+    };
   }
 
   async update(id: number, dto: UpdateJobDto, actorId: number, actor?: AuthenticatedUser) {

@@ -1,5 +1,6 @@
 import { Entity, Column, OneToMany } from 'typeorm';
 import { BaseEntity } from './base.entity';
+import { PaymentMethod, PaymentStatus } from './revenue-entry.entity';
 
 export enum DebitNoteStatus {
   DRAFT = 'DRAFT',
@@ -13,7 +14,7 @@ export class DebitNote extends BaseEntity {
   @Column({ name: 'partner_id' })
   partnerId: number;
 
-  @Column({ name: 'job_id', nullable: true })
+  @Column({ name: 'job_id' })
   jobId: number;
 
   @Column({ length: 10, default: 'VND' })
@@ -30,6 +31,37 @@ export class DebitNote extends BaseEntity {
 
   @Column({ type: 'text', nullable: true })
   description: string;
+
+  @Column({
+    name: 'payment_method',
+    type: 'enum',
+    enum: PaymentMethod,
+    nullable: true,
+  })
+  paymentMethod: PaymentMethod;
+
+  @Column({ name: 'payment_account_ref', length: 100, nullable: true })
+  paymentAccountRef: string;
+
+  @Column({
+    name: 'payment_status',
+    type: 'enum',
+    enum: PaymentStatus,
+    default: PaymentStatus.UNPAID,
+  })
+  paymentStatus: PaymentStatus;
+
+  @Column({ name: 'paid_amount', type: 'decimal', precision: 18, scale: 4, default: 0 })
+  paidAmount: number;
+
+  @Column({ name: 'paid_at', type: 'datetime', nullable: true })
+  paidAt: Date;
+
+  @Column({ name: 'paid_by', nullable: true })
+  paidBy: number;
+
+  @Column({ name: 'receivable_entry_id', nullable: true })
+  receivableEntryId: number;
 
   @Column({
     type: 'enum',

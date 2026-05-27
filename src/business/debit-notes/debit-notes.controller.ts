@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { DebitNotesService } from './debit-notes.service';
-import { CreateDebitNoteDto, UpdateDebitNoteDto, VoidDebitNoteDto, DebitNoteFilterDto } from './dto/debit-note.dto';
+import { CreateDebitNoteDto, UpdateDebitNoteDto, VoidDebitNoteDto, DebitNoteFilterDto, RecordDebitNotePaymentDto } from './dto/debit-note.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
@@ -39,6 +39,12 @@ export class DebitNotesController {
   @Put(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateDebitNoteDto, @CurrentUser() user: { id: number }) {
     return this.svc.update(id, dto, user.id);
+  }
+
+  @RequirePermission('accounting:post')
+  @Patch(':id/record-payment')
+  recordPayment(@Param('id', ParseIntPipe) id: number, @Body() dto: RecordDebitNotePaymentDto, @CurrentUser() user: { id: number }) {
+    return this.svc.recordPayment(id, dto, user.id);
   }
 
   @RequirePermission('accounting:post')

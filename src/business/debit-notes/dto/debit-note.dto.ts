@@ -1,5 +1,6 @@
 import { IsOptional, IsNumber, IsString, IsArray, ValidateNested, IsEnum } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
+import { PaymentMethod } from '../../../models/revenue-entry.entity';
 
 export class CreateDebitNoteLineDto {
   @IsOptional() @IsString() serviceType?: string;
@@ -12,13 +13,15 @@ export class CreateDebitNoteLineDto {
 }
 
 export class CreateDebitNoteDto {
-  @IsNumber() partnerId: number;
-  @IsOptional() @IsNumber() jobId?: number;
+  @IsOptional() @IsNumber() partnerId?: number;
+  @IsNumber() jobId: number;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsString() docDate?: string;
   @IsOptional() @IsString() dueDate?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsNumber() amount?: number;
+  @IsOptional() @IsEnum(PaymentMethod) paymentMethod?: PaymentMethod;
+  @IsOptional() @IsString() paymentAccountRef?: string;
 
   @IsOptional()
   @IsArray()
@@ -35,6 +38,8 @@ export class UpdateDebitNoteDto {
   @IsOptional() @IsString() dueDate?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsNumber() amount?: number;
+  @IsOptional() @IsEnum(PaymentMethod) paymentMethod?: PaymentMethod;
+  @IsOptional() @IsString() paymentAccountRef?: string;
 
   @IsOptional()
   @IsArray()
@@ -45,6 +50,13 @@ export class UpdateDebitNoteDto {
 
 export class VoidDebitNoteDto {
   @IsString() reason: string;
+}
+
+export class RecordDebitNotePaymentDto {
+  @IsNumber() amount: number;
+  @IsEnum(PaymentMethod) paymentMethod: PaymentMethod;
+  @IsOptional() @IsString() paymentAccountRef?: string;
+  @IsOptional() @IsString() paymentDate?: string;
 }
 
 export class DebitNoteFilterDto {

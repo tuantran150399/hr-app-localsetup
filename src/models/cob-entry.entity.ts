@@ -35,6 +35,10 @@ export class CobEntry extends BaseEntity {
   @Column({ name: 'receivable_entry_id', nullable: true })
   receivableEntryId: number;
 
+  /** Paired charge/collect-on-behalf entry id */
+  @Column({ name: 'related_cob_entry_id', nullable: true })
+  relatedCobEntryId: number;
+
   @Column({ length: 10, default: 'VND' })
   currency: string;
 

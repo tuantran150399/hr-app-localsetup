@@ -55,12 +55,16 @@ export class CobService {
     saved.receivableEntryId = receivable.id;
     await this.cobRepo.save(saved);
 
+    const collectEntry = await this.createPairedCollectEntry(saved, userId);
+    saved.relatedCobEntryId = collectEntry.id;
+    await this.cobRepo.save(saved);
+
     await this.auditSvc.log({
       entityName: 'CobEntry', entityId: saved.id, action: 'CREATE_COB', userId,
-      newValues: { partnerId: dto.partnerId, amount: dto.amount, receivableId: receivable.id },
+      newValues: { partnerId: dto.partnerId, amount: dto.amount, receivableId: receivable.id, collectEntryId: collectEntry.id },
     });
 
-    return { ...saved, receivable };
+    return { ...saved, receivable, collectEntry };
   }
 
   /** Mark an existing cost entry as charge-on-behalf */
@@ -98,12 +102,16 @@ export class CobService {
     saved.receivableEntryId = receivable.id;
     await this.cobRepo.save(saved);
 
+    const collectEntry = await this.createPairedCollectEntry(saved, userId);
+    saved.relatedCobEntryId = collectEntry.id;
+    await this.cobRepo.save(saved);
+
     await this.auditSvc.log({
       entityName: 'CobEntry', entityId: saved.id, action: 'MARK_COST_AS_COB', userId,
-      newValues: { costId, partnerId: dto.partnerId, receivableId: receivable.id },
+      newValues: { costId, partnerId: dto.partnerId, receivableId: receivable.id, collectEntryId: collectEntry.id },
     });
 
-    return { cobEntry: saved, receivable };
+    return { cobEntry: saved, receivable, collectEntry };
   }
 
   async settleCob(id: number, userId: number) {
@@ -177,6 +185,34 @@ export class CobService {
       updatedBy: userId,
     });
     return this.revenueRepo.save(receivable);
+  }
+
+  private async createPairedCollectEntry(cobEntry: CobEntry, userId: number): Promise<CobEntry> {
+    const collectEntry = this.cobRepo.create({
+      type: CobType.COLLECT_ON_BEHALF,
+      partnerId: cobEntry.partnerId,
+      vendorId: cobEntry.vendorId,
+      jobId: cobEntry.jobId,
+      costEntryId: cobEntry.costEntryId,
+      receivableEntryId: cobEntry.receivableEntryId,
+      relatedCobEntryId: cobEntry.id,
+      currency: cobEntry.currency,
+      amount: cobEntry.amount,
+      description: `Auto collect-on-behalf from COB #${cobEntry.id}: ${cobEntry.description || ''}`,
+      status: CobStatus.OPEN,
+      createdBy: userId,
+      updatedBy: userId,
+    });
+
+    const saved = await this.cobRepo.save(collectEntry);
+    await this.auditSvc.log({
+      entityName: 'CobEntry',
+      entityId: saved.id,
+      action: 'CREATE_COLLECT_FROM_COB',
+      userId,
+      newValues: { cobEntryId: cobEntry.id, partnerId: saved.partnerId, amount: saved.amount },
+    });
+    return saved;
   }
 
   private async findOneOrFail(id: number): Promise<CobEntry> {
