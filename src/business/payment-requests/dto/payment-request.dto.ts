@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import { IsBoolean, IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Min, ValidateIf } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 import { PaymentRequestStatus } from '../../../models/payment-request.entity';
+import { PaymentMethod } from '../../../models/revenue-entry.entity';
 
 export class CreatePaymentRequestDto {
   @IsOptional()
@@ -44,6 +45,10 @@ export class CreatePaymentRequestDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
 }
 
 export class RejectPaymentRequestDto {

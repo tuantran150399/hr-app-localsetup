@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 import { AdvanceStatus } from '../../../models/employee-advance.entity';
+import { PaymentMethod } from '../../../models/revenue-entry.entity';
 
 export class CreateAdvanceDto {
   @Type(() => Number) @IsInt() employeeId: number;
@@ -10,6 +11,7 @@ export class CreateAdvanceDto {
   @Type(() => Number) @IsNumber() @Min(0.01) amount: number;
   @IsOptional() @IsDateString() dueDate?: string;
   @IsOptional() @IsString() purpose?: string;
+  @IsOptional() @IsEnum(PaymentMethod) paymentMethod?: PaymentMethod;
 }
 
 export class AdvanceFilterDto extends PaginationDto {

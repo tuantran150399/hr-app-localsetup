@@ -1,5 +1,6 @@
 import { Entity, Column } from 'typeorm';
 import { BaseEntity } from './base.entity';
+import { PaymentMethod } from './revenue-entry.entity';
 
 export enum PaymentRequestStatus {
   PENDING_DEPARTMENT_APPROVAL = 'PENDING_DEPARTMENT_APPROVAL',
@@ -42,6 +43,14 @@ export class PaymentRequest extends BaseEntity {
 
   @Column({ type: 'text', nullable: true })
   reason: string;
+
+  @Column({
+    name: 'payment_method',
+    type: 'enum',
+    enum: PaymentMethod,
+    nullable: true,
+  })
+  paymentMethod: PaymentMethod;
 
   @Column({
     type: 'enum',
