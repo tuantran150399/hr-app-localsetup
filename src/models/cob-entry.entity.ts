@@ -1,5 +1,6 @@
 import { Entity, Column } from 'typeorm';
 import { BaseEntity } from './base.entity';
+import { PaymentMethod } from './revenue-entry.entity';
 
 export enum CobType {
   CHARGE_ON_BEHALF = 'CHARGE_ON_BEHALF',
@@ -47,6 +48,14 @@ export class CobEntry extends BaseEntity {
 
   @Column({ type: 'text', nullable: true })
   description: string;
+
+  @Column({
+    name: 'payment_method',
+    type: 'enum',
+    enum: PaymentMethod,
+    nullable: true,
+  })
+  paymentMethod: PaymentMethod;
 
   @Column({ type: 'enum', enum: CobStatus, default: CobStatus.OPEN })
   status: CobStatus;

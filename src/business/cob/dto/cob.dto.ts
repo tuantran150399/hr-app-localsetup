@@ -1,5 +1,6 @@
-import { IsOptional, IsNumber, IsString } from 'class-validator';
+import { IsEnum, IsOptional, IsNumber, IsString } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { PaymentMethod } from '../../../models/revenue-entry.entity';
 
 export class CreateCobDto {
   @IsNumber() partnerId: number;
@@ -8,6 +9,7 @@ export class CreateCobDto {
   @IsNumber() amount: number;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsEnum(PaymentMethod) paymentMethod?: PaymentMethod;
 }
 
 export class MarkCostAsCobDto {

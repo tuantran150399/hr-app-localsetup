@@ -1,5 +1,6 @@
 import { Entity, Column } from 'typeorm';
 import { BaseEntity } from './base.entity';
+import { PaymentMethod } from './revenue-entry.entity';
 
 export enum AdvanceStatus {
   PENDING = 'PENDING',
@@ -31,6 +32,14 @@ export class EmployeeAdvance extends BaseEntity {
 
   @Column({ type: 'text', nullable: true })
   purpose: string;
+
+  @Column({
+    name: 'payment_method',
+    type: 'enum',
+    enum: PaymentMethod,
+    nullable: true,
+  })
+  paymentMethod: PaymentMethod;
 
   @Column({ type: 'enum', enum: AdvanceStatus, default: AdvanceStatus.PENDING })
   status: AdvanceStatus;
