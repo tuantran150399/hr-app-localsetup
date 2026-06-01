@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { AdvancesService } from './advances.service';
-import { AdvanceFilterDto, CreateAdvanceDto, RejectAdvanceDto, SettleAdvanceDto } from './dto/advance.dto';
+import { AdvanceFilterDto, CreateAdvanceDto, RejectAdvanceDto, SettleAdvanceDto, UpdateAdvanceDto } from './dto/advance.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
@@ -33,6 +33,18 @@ export class AdvancesController {
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.svc.findOne(id);
+  }
+
+  @RequirePermission('advance:manage')
+  @Put(':id')
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateAdvanceDto, @CurrentUser() user: { id: number }) {
+    return this.svc.update(id, dto, user.id);
+  }
+
+  @RequirePermission('advance:manage')
+  @Delete(':id')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
+    return this.svc.remove(id, user.id);
   }
 
   @RequirePermission('advance:manage')

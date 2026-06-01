@@ -6,7 +6,7 @@ import { EmployeeAdvance, AdvanceStatus } from '../../models/employee-advance.en
 import { Job } from '../../models/job.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
-import { AdvanceFilterDto, CreateAdvanceDto, RejectAdvanceDto, SettleAdvanceDto } from './dto/advance.dto';
+import { AdvanceFilterDto, CreateAdvanceDto, RejectAdvanceDto, SettleAdvanceDto, UpdateAdvanceDto } from './dto/advance.dto';
 
 @Injectable()
 export class AdvancesService {
@@ -50,6 +50,27 @@ export class AdvancesService {
     const updated = await this.repo.save({ ...advance, status: AdvanceStatus.APPROVED, approvedAt: new Date(), approvedBy: actorId, updatedBy: actorId });
     this.auditLogs.logAsync({ entityName: 'EmployeeAdvance', entityId: id, action: 'APPROVE', userId: actorId });
     return updated;
+  }
+
+  async update(id: number, dto: UpdateAdvanceDto, actorId: number) {
+    const advance = await this.findOne(id);
+    if (advance.status !== AdvanceStatus.PENDING) throw new BadRequestException('Only pending advances can be updated');
+    if (dto.employeeId && dto.employeeId !== advance.employeeId) {
+      await this.assertEmployee(dto.employeeId);
+      await this.assertNoOverdueAdvance(dto.employeeId);
+    }
+    if (dto.jobId) await this.assertJob(dto.jobId);
+    const updated = await this.repo.save({ ...advance, ...dto, updatedBy: actorId });
+    this.auditLogs.logAsync({ entityName: 'EmployeeAdvance', entityId: id, action: 'UPDATE', userId: actorId, newValues: updated });
+    return updated;
+  }
+
+  async remove(id: number, actorId: number) {
+    const advance = await this.findOne(id);
+    if (advance.status !== AdvanceStatus.PENDING) throw new BadRequestException('Only pending advances can be deleted');
+    await this.repo.remove(advance);
+    this.auditLogs.logAsync({ entityName: 'EmployeeAdvance', entityId: id, action: 'DELETE', userId: actorId, oldValues: advance });
+    return { success: true };
   }
 
   async reject(id: number, dto: RejectAdvanceDto, actorId: number) {
