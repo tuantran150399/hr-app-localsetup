@@ -36,7 +36,7 @@ export class JobsService {
     }
   }
 
-  private async validateRefs(dto: { partnerId?: number; branchId?: number; assignedUserId?: number; agentId?: number }) {
+  private async validateRefs(dto: { partnerId?: number; branchId?: number; assignedUserId?: number; agentId?: number }, existingJobBranchId?: number) {
     if (dto.partnerId) {
       const p = await this.partnerRepo.findOne({ where: { id: dto.partnerId, isActive: true } });
       if (!p) throw new BadRequestException(`Partner #${dto.partnerId} not found`);
@@ -53,6 +53,11 @@ export class JobsService {
       const u = await this.userRepo.findOne({ where: { id: dto.assignedUserId } });
       if (!u) throw new BadRequestException(`User #${dto.assignedUserId} not found`);
       if (!u.isActive) throw new BadRequestException(`User #${dto.assignedUserId} is inactive`);
+      
+      const targetBranchId = dto.branchId ?? existingJobBranchId;
+      if (u.branchId && targetBranchId && u.branchId !== targetBranchId) {
+        throw new BadRequestException('Assigned user does not belong to the job branch');
+      }
     }
   }
 
@@ -213,7 +218,7 @@ export class JobsService {
       throw new BadRequestException('Cannot edit a CLOSED or CANCELLED job');
     }
     this.enforceBranchAccess(actor, dto.branchId ?? job.branchId);
-    await this.validateRefs(dto);
+    await this.validateRefs(dto, job.branchId);
     const oldValues = { jobCode: job.jobCode, partnerId: job.partnerId, branchId: job.branchId, status: job.status };
     const updated = await this.repo.save({ ...job, ...dto, updatedBy: actorId });
     this.auditLogs.logAsync({
