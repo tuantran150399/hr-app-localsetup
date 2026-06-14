@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Employee, EmployeeStatus } from '../../models/employee.entity';
@@ -6,6 +6,7 @@ import { EmployeeAdvance, AdvanceStatus } from '../../models/employee-advance.en
 import { Job } from '../../models/job.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
+import { assertBranchAccess, AuthenticatedUser, getScopedBranchId } from '../../common/auth/branch-scope.util';
 import { AdvanceFilterDto, CreateAdvanceDto, RejectAdvanceDto, SettleAdvanceDto, UpdateAdvanceDto } from './dto/advance.dto';
 
 @Injectable()
@@ -17,8 +18,23 @@ export class AdvancesService {
     private auditLogs: AuditLogsService,
   ) {}
 
-  async create(dto: CreateAdvanceDto, actorId: number) {
+  private enforceBranchAccess(user: AuthenticatedUser | undefined, branchId?: number | null) {
+    try {
+      assertBranchAccess(user, branchId);
+    } catch {
+      throw new ForbiddenException('You cannot access data from another branch');
+    }
+  }
+
+  private async getEmployeeBranchId(employeeId: number): Promise<number | undefined> {
+    const emp = await this.employeeRepo.findOne({ where: { id: employeeId }, select: ['id', 'branchId'] });
+    return emp?.branchId ?? undefined;
+  }
+
+  async create(dto: CreateAdvanceDto, actorId: number, actor?: AuthenticatedUser) {
     await this.assertEmployee(dto.employeeId);
+    const empBranchId = await this.getEmployeeBranchId(dto.employeeId);
+    this.enforceBranchAccess(actor, empBranchId);
     if (dto.jobId) await this.assertJob(dto.jobId);
     await this.assertNoOverdueAdvance(dto.employeeId);
     const advance = await this.repo.save(this.repo.create({ ...dto, status: AdvanceStatus.PENDING, createdBy: actorId, updatedBy: actorId }));
@@ -26,9 +42,12 @@ export class AdvancesService {
     return advance;
   }
 
-  async findAll(filter: AdvanceFilterDto = {}) {
+  async findAll(filter: AdvanceFilterDto = {}, actor?: AuthenticatedUser) {
     const { page = 1, limit = 20, employeeId, jobId, status, dueDateFrom, dueDateTo } = filter;
-    const qb = this.repo.createQueryBuilder('a');
+    const qb = this.repo.createQueryBuilder('a')
+      .leftJoin(Employee, 'emp', 'emp.id = a.employeeId');
+    const scopedBranchId = getScopedBranchId(actor);
+    if (scopedBranchId) qb.andWhere('emp.branchId = :branchId', { branchId: scopedBranchId });
     if (employeeId) qb.andWhere('a.employeeId = :employeeId', { employeeId });
     if (jobId) qb.andWhere('a.jobId = :jobId', { jobId });
     if (status) qb.andWhere('a.status = :status', { status });
@@ -38,25 +57,29 @@ export class AdvancesService {
     return paginate(await qb.getManyAndCount(), page, limit);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, actor?: AuthenticatedUser) {
     const advance = await this.repo.findOne({ where: { id } });
     if (!advance) throw new NotFoundException('Employee advance not found');
+    const empBranchId = await this.getEmployeeBranchId(advance.employeeId);
+    this.enforceBranchAccess(actor, empBranchId);
     return advance;
   }
 
-  async approve(id: number, actorId: number) {
-    const advance = await this.findOne(id);
+  async approve(id: number, actorId: number, actor?: AuthenticatedUser) {
+    const advance = await this.findOne(id, actor);
     if (advance.status !== AdvanceStatus.PENDING) throw new BadRequestException('Only pending advances can be approved');
     const updated = await this.repo.save({ ...advance, status: AdvanceStatus.APPROVED, approvedAt: new Date(), approvedBy: actorId, updatedBy: actorId });
     this.auditLogs.logAsync({ entityName: 'EmployeeAdvance', entityId: id, action: 'APPROVE', userId: actorId });
     return updated;
   }
 
-  async update(id: number, dto: UpdateAdvanceDto, actorId: number) {
-    const advance = await this.findOne(id);
+  async update(id: number, dto: UpdateAdvanceDto, actorId: number, actor?: AuthenticatedUser) {
+    const advance = await this.findOne(id, actor);
     if (advance.status !== AdvanceStatus.PENDING) throw new BadRequestException('Only pending advances can be updated');
     if (dto.employeeId && dto.employeeId !== advance.employeeId) {
       await this.assertEmployee(dto.employeeId);
+      const empBranchId = await this.getEmployeeBranchId(dto.employeeId);
+      this.enforceBranchAccess(actor, empBranchId);
       await this.assertNoOverdueAdvance(dto.employeeId);
     }
     if (dto.jobId) await this.assertJob(dto.jobId);
@@ -65,24 +88,24 @@ export class AdvancesService {
     return updated;
   }
 
-  async remove(id: number, actorId: number) {
-    const advance = await this.findOne(id);
+  async remove(id: number, actorId: number, actor?: AuthenticatedUser) {
+    const advance = await this.findOne(id, actor);
     if (advance.status !== AdvanceStatus.PENDING) throw new BadRequestException('Only pending advances can be deleted');
     await this.repo.remove(advance);
     this.auditLogs.logAsync({ entityName: 'EmployeeAdvance', entityId: id, action: 'DELETE', userId: actorId, oldValues: advance });
     return { success: true };
   }
 
-  async reject(id: number, dto: RejectAdvanceDto, actorId: number) {
-    const advance = await this.findOne(id);
+  async reject(id: number, dto: RejectAdvanceDto, actorId: number, actor?: AuthenticatedUser) {
+    const advance = await this.findOne(id, actor);
     if (advance.status !== AdvanceStatus.PENDING) throw new BadRequestException('Only pending advances can be rejected');
     const updated = await this.repo.save({ ...advance, status: AdvanceStatus.REJECTED, rejectReason: dto.reason, updatedBy: actorId });
     this.auditLogs.logAsync({ entityName: 'EmployeeAdvance', entityId: id, action: 'REJECT', userId: actorId, newValues: { reason: dto.reason } });
     return updated;
   }
 
-  async settle(id: number, dto: SettleAdvanceDto, actorId: number) {
-    const advance = await this.findOne(id);
+  async settle(id: number, dto: SettleAdvanceDto, actorId: number, actor?: AuthenticatedUser) {
+    const advance = await this.findOne(id, actor);
     if (advance.status !== AdvanceStatus.APPROVED) throw new BadRequestException('Only approved advances can be settled');
     const nextSettled = Number(advance.settledAmount ?? 0) + Number(dto.amount);
     if (nextSettled > Number(advance.amount)) throw new BadRequestException('Settlement exceeds advance amount');

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AttendanceRecord } from '../../models/attendance-record.entity';
@@ -9,6 +9,7 @@ import { Branch } from '../../models/branch.entity';
 import { User } from '../../models/user.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
+import { assertBranchAccess, AuthenticatedUser, getScopedBranchId } from '../../common/auth/branch-scope.util';
 import {
   AttendanceFilterDto,
   CreateEmployeeDto,
@@ -34,7 +35,16 @@ export class HrService {
     private auditLogs: AuditLogsService,
   ) {}
 
-  async createEmployee(dto: CreateEmployeeDto, actorId: number) {
+  private enforceBranchAccess(user: AuthenticatedUser | undefined, branchId?: number | null) {
+    try {
+      assertBranchAccess(user, branchId);
+    } catch {
+      throw new ForbiddenException('You cannot access data from another branch');
+    }
+  }
+
+  async createEmployee(dto: CreateEmployeeDto, actorId: number, actor?: AuthenticatedUser) {
+    this.enforceBranchAccess(actor, dto.branchId);
     await this.assertRefs(dto.branchId, dto.userId);
     const exists = await this.employeeRepo.findOne({ where: { employeeCode: dto.employeeCode } });
     if (exists) throw new ConflictException('Employee code already exists');
@@ -43,33 +53,36 @@ export class HrService {
     return employee;
   }
 
-  async findEmployees(filter: EmployeeFilterDto = {}) {
+  async findEmployees(filter: EmployeeFilterDto = {}, actor?: AuthenticatedUser) {
     const { page = 1, limit = 20, keyword, branchId, department, status } = filter;
     const qb = this.employeeRepo.createQueryBuilder('e');
     if (keyword) qb.andWhere('(e.employeeCode LIKE :kw OR e.fullName LIKE :kw OR e.email LIKE :kw OR e.phone LIKE :kw)', { kw: `%${keyword}%` });
-    if (branchId) qb.andWhere('e.branchId = :branchId', { branchId });
+    const scopedBranchId = getScopedBranchId(actor, branchId);
+    if (scopedBranchId) qb.andWhere('e.branchId = :branchId', { branchId: scopedBranchId });
     if (department) qb.andWhere('e.department = :department', { department });
     if (status) qb.andWhere('e.status = :status', { status });
     qb.orderBy('e.createdAt', 'DESC').skip(getSkip(page, limit)).take(limit);
     return paginate(await qb.getManyAndCount(), page, limit);
   }
 
-  async findEmployee(id: number) {
+  async findEmployee(id: number, actor?: AuthenticatedUser) {
     const employee = await this.employeeRepo.findOne({ where: { id } });
     if (!employee) throw new NotFoundException('Employee not found');
+    this.enforceBranchAccess(actor, employee.branchId);
     return employee;
   }
 
-  async updateEmployee(id: number, dto: UpdateEmployeeDto, actorId: number) {
-    const current = await this.findEmployee(id);
+  async updateEmployee(id: number, dto: UpdateEmployeeDto, actorId: number, actor?: AuthenticatedUser) {
+    const current = await this.findEmployee(id, actor);
+    this.enforceBranchAccess(actor, dto.branchId ?? current.branchId);
     await this.assertRefs(dto.branchId, dto.userId);
     const updated = await this.employeeRepo.save({ ...current, ...dto, updatedBy: actorId });
     this.auditLogs.logAsync({ entityName: 'Employee', entityId: id, action: 'UPDATE', userId: actorId, oldValues: current, newValues: updated });
     return updated;
   }
 
-  async deactivateEmployee(id: number, actorId: number) {
-    const current = await this.findEmployee(id);
+  async deactivateEmployee(id: number, actorId: number, actor?: AuthenticatedUser) {
+    const current = await this.findEmployee(id, actor);
     const updated = await this.employeeRepo.save({ ...current, status: EmployeeStatus.INACTIVE, updatedBy: actorId });
     this.auditLogs.logAsync({ entityName: 'Employee', entityId: id, action: 'DEACTIVATE', userId: actorId });
     return updated;

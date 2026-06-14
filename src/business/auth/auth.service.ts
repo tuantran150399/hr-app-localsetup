@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -8,6 +8,7 @@ import { User } from '../../models/user.entity';
 import { LoginDto } from './dto/login.dto';
 import { JwtPayload } from './jwt.strategy';
 import { LoginSecurityContext, SecurityService } from '../security/security.service';
+import { isUserBlocked } from '../../common/auth/user-access.util';
 
 @Injectable()
 export class AuthService {
@@ -35,6 +36,10 @@ export class AuthService {
       await this.securityService.recordFailedLogin(dto.username, securityContext, 'Invalid credentials');
       throw new UnauthorizedException('Invalid credentials');
     }
+    if (isUserBlocked(user)) {
+      await this.securityService.recordFailedLogin(dto.username, securityContext, 'Account blocked');
+      throw new ForbiddenException('Account is blocked. Please contact your administrator.');
+    }
 
     const payload = this.buildPayload(user);
     await this.securityService.recordSuccessfulLogin(user, securityContext);
@@ -46,6 +51,8 @@ export class AuthService {
         username: user.username,
         fullName: user.fullName,
         email: user.email,
+        branchId: user.branchId,
+        canAccessAllBranches: user.canAccessAllBranches,
         roles: payload.roles,
         permissions: payload.permissions,
       },
@@ -65,6 +72,7 @@ export class AuthService {
         relations: ['roles', 'roles.permissions'],
       });
       if (!user) throw new UnauthorizedException('Invalid refresh token');
+      if (isUserBlocked(user)) throw new UnauthorizedException('Account is blocked');
 
       const payload = this.buildPayload(user);
       return {
@@ -78,10 +86,11 @@ export class AuthService {
 
   async getMe(userId: number) {
     const user = await this.userRepo.findOne({
-      where: { id: userId },
+      where: { id: userId, isActive: true },
       relations: ['roles', 'roles.permissions'],
     });
     if (!user) throw new UnauthorizedException();
+    if (isUserBlocked(user)) throw new UnauthorizedException('Account is blocked');
     const payload = this.buildPayload(user);
     return {
       id: user.id,
@@ -89,6 +98,7 @@ export class AuthService {
       fullName: user.fullName,
       email: user.email,
       branchId: user.branchId,
+      canAccessAllBranches: user.canAccessAllBranches,
       roles: payload.roles,
       permissions: payload.permissions,
     };
@@ -102,6 +112,7 @@ export class AuthService {
       sub: user.id,
       username: user.username,
       branchId: user.branchId,
+      canAccessAllBranches: user.canAccessAllBranches,
       roles,
       permissions: Array.from(permissionSet),
     };

@@ -3,6 +3,7 @@ import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { BlockUserDto } from './dto/block-user.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
@@ -40,6 +41,22 @@ export class UsersController {
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto, @CurrentUser() user: { id: number }) {
     return this.usersService.update(id, dto, user.id);
+  }
+
+  @RequirePermission('user:manage')
+  @Patch(':id/block')
+  block(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: BlockUserDto,
+    @CurrentUser() user: { id: number },
+  ) {
+    return this.usersService.block(id, dto, user.id);
+  }
+
+  @RequirePermission('user:manage')
+  @Patch(':id/unblock')
+  unblock(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
+    return this.usersService.unblock(id, user.id);
   }
 
   @Patch('me/password')
