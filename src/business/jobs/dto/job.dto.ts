@@ -1,6 +1,6 @@
 ﻿import { IsEnum, IsNotEmpty, IsOptional, IsString, IsDateString, IsInt, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
-import { JobType, ShipmentMode } from '../../../models/job.entity';
+import { JobStatus, JobType, ShipmentMode } from '../../../models/job.entity';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class CreateJobDto {
@@ -41,6 +41,7 @@ export class CreateJobDto {
 export class UpdateJobDto {
   @IsOptional() @IsEnum(JobType) jobType?: JobType;
   @IsOptional() @IsEnum(ShipmentMode) shipmentMode?: ShipmentMode;
+  @IsOptional() @IsEnum(JobStatus) status?: JobStatus;
   @IsOptional() @IsInt() partnerId?: number;
   @IsOptional() @IsInt() branchId?: number;
   @IsOptional() @IsInt() assignedUserId?: number;
