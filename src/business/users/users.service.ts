@@ -9,6 +9,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { BlockUserDto } from './dto/block-user.dto';
 import { isUserBlocked } from '../../common/auth/user-access.util';
 
@@ -195,6 +196,26 @@ export class UsersService {
     user.password = await bcrypt.hash(dto.newPassword, 12);
     await this.userRepo.save(user);
     return { message: 'Password changed successfully' };
+  }
+
+  async updateProfile(id: number, dto: UpdateProfileDto) {
+    const user = await this.userRepo.findOne({ where: { id } });
+    if (!user) throw new NotFoundException('User not found');
+    if (dto.email && dto.email !== user.email) {
+      const emailTaken = await this.userRepo.findOne({ where: { email: dto.email } });
+      if (emailTaken && emailTaken.id !== id) {
+        throw new ConflictException('Email already taken');
+      }
+    }
+    const oldValues = { fullName: user.fullName, email: user.email };
+    Object.assign(user, dto, { updatedBy: id });
+    const saved = await this.userRepo.save(user);
+    this.auditLogs.logAsync({
+      entityName: 'User', entityId: id, action: 'UPDATE_PROFILE', userId: id,
+      oldValues,
+      newValues: { fullName: saved.fullName, email: saved.email },
+    });
+    return { id: saved.id, fullName: saved.fullName, email: saved.email, message: 'Profile updated successfully' };
   }
 
   async remove(id: number, actorId: number) {

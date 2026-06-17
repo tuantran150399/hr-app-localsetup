@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Role } from '../../models/role.entity';
@@ -22,7 +22,7 @@ export class RolesService {
   }
 
   findAll() {
-    return this.roleRepo.find({ relations: ['permissions'] });
+    return this.roleRepo.find({ relations: ['permissions', 'users'] });
   }
 
   async findOne(id: number) {
@@ -43,5 +43,18 @@ export class RolesService {
 
   findAllPermissions() {
     return this.permRepo.find();
+  }
+
+  async remove(id: number) {
+    const role = await this.roleRepo.findOne({
+      where: { id },
+      relations: ['users'],
+    });
+    if (!role) throw new NotFoundException('Role not found');
+    if (role.users && role.users.length > 0) {
+      throw new ConflictException('Role is assigned to one or more users and cannot be deleted.');
+    }
+    await this.roleRepo.remove(role);
+    return { success: true, id };
   }
 }
