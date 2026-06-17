@@ -37,6 +37,9 @@ export class Partner extends BaseEntity {
   @Column({ length: 50, nullable: true })
   taxCode: string;
 
+  @Column({ name: 'actual_debt', type: 'decimal', precision: 18, scale: 4, default: 0 })
+  actualDebt: number;
+
   @Column({ default: true })
   isActive: boolean;
 }

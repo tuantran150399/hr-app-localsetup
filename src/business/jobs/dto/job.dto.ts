@@ -1,5 +1,5 @@
-﻿import { IsEnum, IsNotEmpty, IsOptional, IsString, IsDateString, IsInt, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsDateString, IsEnum, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { JobType, ShipmentMode } from '../../../models/job.entity';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
@@ -11,13 +11,13 @@ export class CreateJobDto {
   @IsOptional() @IsInt() branchId?: number;
   @IsOptional() @IsInt() assignedUserId?: number;
   @IsOptional() @IsInt() agentId?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) debtAmount?: number | null;
   @IsOptional() @IsString() shipper?: string;
   @IsOptional() @IsString() consignee?: string;
   @IsOptional() @IsString() declarationNo?: string;
   @IsOptional() @IsString() businessType?: string;
   @IsOptional() @IsString() customsLane?: string;
   @IsOptional() @IsString() cargoType?: string;
-  // Shipment details
   @IsOptional() @IsString() bookingRef?: string;
   @IsOptional() @IsString() vesselName?: string;
   @IsOptional() @IsString() voyageNo?: string;
@@ -45,6 +45,7 @@ export class UpdateJobDto {
   @IsOptional() @IsInt() branchId?: number;
   @IsOptional() @IsInt() assignedUserId?: number;
   @IsOptional() @IsInt() agentId?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) debtAmount?: number | null;
   @IsOptional() @IsString() shipper?: string;
   @IsOptional() @IsString() consignee?: string;
   @IsOptional() @IsString() declarationNo?: string;
@@ -71,7 +72,6 @@ export class UpdateJobDto {
   @IsOptional() @IsString() internalNotes?: string;
 }
 
-/** Query DTO for GET /jobs — pagination + filters */
 export class JobFilterDto extends PaginationDto {
   @IsOptional() @IsEnum(JobType) jobType?: JobType;
   @IsOptional() @IsEnum(ShipmentMode) shipmentMode?: ShipmentMode;
@@ -81,7 +81,6 @@ export class JobFilterDto extends PaginationDto {
   @IsOptional() @Type(() => Number) @IsInt() assignedUserId?: number;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
-  /** Allowed sort fields */
   @IsOptional() @IsString() @IsIn(['createdAt', 'etd', 'eta', 'jobCode', 'status']) sortBy?: string;
 }
 
@@ -97,4 +96,10 @@ export class UpdateMilestoneDto {
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsDateString() milestoneAt?: string;
   @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
+}
+
+export class JobDebtPreviewDto {
+  @IsOptional() @Type(() => Number) @IsInt() partnerId?: number;
+  @IsOptional() @Type(() => Number) @IsInt() jobId?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) debtAmount?: number | null;
 }

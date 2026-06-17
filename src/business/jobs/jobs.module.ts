@@ -9,11 +9,11 @@ import { Branch } from '../../models/branch.entity';
 import { User } from '../../models/user.entity';
 import { RevenueEntry } from '../../models/revenue-entry.entity';
 import { CostEntry } from '../../models/cost-entry.entity';
-import { DebtPolicy } from '../../models/debt-policy.entity';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
+import { CustomerDebtModule } from '../customer-debt/customer-debt.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Job, JobMilestone, Partner, Branch, User, RevenueEntry, CostEntry, DebtPolicy]), AuditLogsModule],
+  imports: [TypeOrmModule.forFeature([Job, JobMilestone, Partner, Branch, User, RevenueEntry, CostEntry]), AuditLogsModule, CustomerDebtModule],
   controllers: [JobsController],
   providers: [JobsService],
   exports: [JobsService],

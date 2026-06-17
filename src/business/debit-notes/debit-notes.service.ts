@@ -1,10 +1,15 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
+import ExcelJS from 'exceljs';
+import PDFDocument = require('pdfkit');
+import { existsSync } from 'fs';
 import { DebitNote, DebitNoteStatus } from '../../models/debit-note.entity';
 import { DebitNoteLine } from '../../models/debit-note-line.entity';
 import { ServicePrice } from '../../models/service-price.entity';
 import { Job } from '../../models/job.entity';
+import { Partner } from '../../models/partner.entity';
+import { Branch } from '../../models/branch.entity';
 import { AccountingStatus, PaymentStatus, RevenueEntry } from '../../models/revenue-entry.entity';
 import { CreateDebitNoteDto, UpdateDebitNoteDto, VoidDebitNoteDto, DebitNoteFilterDto, RecordDebitNotePaymentDto } from './dto/debit-note.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -19,6 +24,8 @@ export class DebitNotesService {
     @InjectRepository(ServicePrice) private priceRepo: Repository<ServicePrice>,
     @InjectRepository(Job) private jobRepo: Repository<Job>,
     @InjectRepository(RevenueEntry) private revenueRepo: Repository<RevenueEntry>,
+    @InjectRepository(Partner) private partnerRepo: Repository<Partner>,
+    @InjectRepository(Branch) private branchRepo: Repository<Branch>,
     private dataSource: DataSource,
     private auditSvc: AuditLogsService,
   ) {}
@@ -240,6 +247,141 @@ export class DebitNotesService {
 
   // ─── Pricing Lookup ──────────────────────────────────────────────────────
 
+  async exportExcel(id: number, actor?: AuthenticatedUser) {
+    const context = await this.buildExportContext(id, actor);
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Debit Note');
+
+    worksheet.columns = [
+      { key: 'label', width: 24 },
+      { key: 'value', width: 42 },
+      { key: 'serviceType', width: 18 },
+      { key: 'description', width: 44 },
+      { key: 'quantity', width: 12 },
+      { key: 'unitPrice', width: 18 },
+      { key: 'amount', width: 18 },
+    ];
+
+    worksheet.mergeCells('A1:G1');
+    worksheet.getCell('A1').value = `DEBIT NOTE ${context.noteNo}`;
+    worksheet.getCell('A1').font = { bold: true, size: 18 };
+    worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+    const infoRows = [
+      ['Customer', context.partner?.name || '-'],
+      ['Tax Code', context.partner?.taxCode || '-'],
+      ['Address', context.partner?.address || '-'],
+      ['Job No.', context.job?.jobCode || '-'],
+      ['Branch', context.branch?.name || '-'],
+      ['Document Date', this.formatDate(context.note.docDate)],
+      ['Due Date', this.formatDate(context.note.dueDate)],
+      ['Payment Method', context.note.paymentMethod || '-'],
+      ['Payment Status', context.note.paymentStatus || '-'],
+      ['Description', context.note.description || '-'],
+    ];
+
+    let rowIndex = 3;
+    for (const [label, value] of infoRows) {
+      const row = worksheet.getRow(rowIndex);
+      row.getCell(1).value = label;
+      row.getCell(1).font = { bold: true };
+      worksheet.mergeCells(rowIndex, 2, rowIndex, 7);
+      row.getCell(2).value = value;
+      row.getCell(2).alignment = { wrapText: true };
+      rowIndex += 1;
+    }
+
+    rowIndex += 1;
+    const header = worksheet.getRow(rowIndex);
+    ['', '', 'Service', 'Description', 'Qty', 'Unit Price', 'Amount'].forEach((value, index) => {
+      const cell = header.getCell(index + 1);
+      cell.value = value;
+      cell.font = { bold: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAF2FF' } };
+      cell.border = this.excelBorder();
+    });
+
+    for (const line of context.lines) {
+      rowIndex += 1;
+      const row = worksheet.getRow(rowIndex);
+      row.getCell(3).value = line.serviceType || '-';
+      row.getCell(4).value = line.description || '-';
+      row.getCell(5).value = Number(line.quantity || 0);
+      row.getCell(6).value = Number(line.unitPrice || 0);
+      row.getCell(7).value = Number(line.amount || 0);
+      [3, 4, 5, 6, 7].forEach((column) => {
+        row.getCell(column).border = this.excelBorder();
+        row.getCell(column).alignment = { wrapText: true };
+      });
+      row.getCell(6).numFmt = '#,##0';
+      row.getCell(7).numFmt = '#,##0';
+    }
+
+    rowIndex += 1;
+    worksheet.mergeCells(rowIndex, 3, rowIndex, 6);
+    worksheet.getCell(rowIndex, 3).value = 'Total';
+    worksheet.getCell(rowIndex, 3).font = { bold: true };
+    worksheet.getCell(rowIndex, 3).alignment = { horizontal: 'right' };
+    worksheet.getCell(rowIndex, 7).value = Number(context.note.amount || 0);
+    worksheet.getCell(rowIndex, 7).font = { bold: true };
+    worksheet.getCell(rowIndex, 7).numFmt = '#,##0';
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return { fileName: `${context.noteNo}.xlsx`, buffer: Buffer.from(buffer) };
+  }
+
+  async exportPdf(id: number, actor?: AuthenticatedUser) {
+    const context = await this.buildExportContext(id, actor);
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    this.registerPdfFont(doc);
+
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    const done = new Promise<Buffer>((resolve) => doc.on('end', () => resolve(Buffer.concat(chunks))));
+
+    doc.fontSize(18).text(`DEBIT NOTE ${context.noteNo}`, { align: 'center' });
+    doc.moveDown();
+    this.pdfInfoLine(doc, 'Customer', context.partner?.name || '-');
+    this.pdfInfoLine(doc, 'Tax Code', context.partner?.taxCode || '-');
+    this.pdfInfoLine(doc, 'Address', context.partner?.address || '-');
+    this.pdfInfoLine(doc, 'Job No.', context.job?.jobCode || '-');
+    this.pdfInfoLine(doc, 'Branch', context.branch?.name || '-');
+    this.pdfInfoLine(doc, 'Document Date', this.formatDate(context.note.docDate));
+    this.pdfInfoLine(doc, 'Due Date', this.formatDate(context.note.dueDate));
+    this.pdfInfoLine(doc, 'Payment Method', context.note.paymentMethod || '-');
+    this.pdfInfoLine(doc, 'Payment Status', context.note.paymentStatus || '-');
+    if (context.note.description) this.pdfInfoLine(doc, 'Description', context.note.description);
+
+    doc.moveDown();
+    let y = doc.y;
+    this.pdfTableRow(doc, y, ['Service', 'Description', 'Qty', 'Unit Price', 'Amount'], true);
+    y += 24;
+
+    for (const line of context.lines) {
+      if (y > 720) {
+        doc.addPage();
+        y = 40;
+        this.pdfTableRow(doc, y, ['Service', 'Description', 'Qty', 'Unit Price', 'Amount'], true);
+        y += 24;
+      }
+      this.pdfTableRow(doc, y, [
+        line.serviceType || '-',
+        line.description || '-',
+        String(line.quantity || 0),
+        this.formatMoney(line.unitPrice),
+        this.formatMoney(line.amount),
+      ]);
+      y += 24;
+    }
+
+    doc.moveTo(390, y + 10).lineTo(555, y + 10).stroke();
+    doc.fontSize(11).text('Total', 390, y + 18, { width: 80, align: 'right' });
+    doc.fontSize(11).text(`${this.formatMoney(context.note.amount)} ${context.note.currency || 'VND'}`, 470, y + 18, { width: 85, align: 'right' });
+    doc.end();
+
+    return { fileName: `${context.noteNo}.pdf`, buffer: await done };
+  }
+
   async lookupPricing(partnerId?: number, jobId?: number, actor?: AuthenticatedUser) {
     let selectedJob: Job | null = null;
     if (jobId) {
@@ -335,6 +477,72 @@ export class DebitNotesService {
       await em.save(DebitNote, note);
     }
     return { ...note, receivableEntryId: receivable.id };
+  }
+
+  private async buildExportContext(id: number, actor?: AuthenticatedUser) {
+    const note = await this.findOneOrFail(id);
+    await this.enforceNoteBranchAccess(note, actor);
+    const [lines, job, partner] = await Promise.all([
+      this.lineRepo.find({ where: { debitNoteId: id }, order: { id: 'ASC' } }),
+      this.jobRepo.findOne({ where: { id: note.jobId } }),
+      this.partnerRepo.findOne({ where: { id: note.partnerId } }),
+    ]);
+    const branch = job?.branchId ? await this.branchRepo.findOne({ where: { id: job.branchId } }) : null;
+    return { note, lines, job, partner, branch, noteNo: `DN-${note.id}` };
+  }
+
+  private excelBorder() {
+    return {
+      top: { style: 'thin' as const, color: { argb: 'FFD9D9D9' } },
+      left: { style: 'thin' as const, color: { argb: 'FFD9D9D9' } },
+      bottom: { style: 'thin' as const, color: { argb: 'FFD9D9D9' } },
+      right: { style: 'thin' as const, color: { argb: 'FFD9D9D9' } },
+    };
+  }
+
+  private formatDate(value?: Date | string | null) {
+    if (!value) return '-';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toISOString().slice(0, 10);
+  }
+
+  private formatMoney(value?: number | string | null) {
+    return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Number(value || 0));
+  }
+
+  private registerPdfFont(doc: any) {
+    const fontPath = 'C:/Windows/Fonts/arial.ttf';
+    if (existsSync(fontPath)) {
+      doc.registerFont('AppRegular', fontPath);
+      doc.font('AppRegular');
+    }
+  }
+
+  private pdfInfoLine(doc: any, label: string, value: string) {
+    doc.fontSize(10).text(`${label}: `, { continued: true });
+    doc.text(value || '-');
+  }
+
+  private pdfTableRow(doc: any, y: number, values: string[], header = false) {
+    const columns = [
+      { x: 40, width: 80, align: 'left' },
+      { x: 120, width: 210, align: 'left' },
+      { x: 330, width: 45, align: 'right' },
+      { x: 375, width: 90, align: 'right' },
+      { x: 465, width: 90, align: 'right' },
+    ];
+
+    doc.fontSize(header ? 10 : 9);
+    columns.forEach((column, index) => {
+      if (header) doc.rect(column.x, y, column.width, 24).fillAndStroke('#EAF2FF', '#D9D9D9');
+      else doc.rect(column.x, y, column.width, 24).stroke('#D9D9D9');
+      doc.fillColor('#111111').text(values[index] || '-', column.x + 4, y + 7, {
+        width: column.width - 8,
+        align: column.align,
+        lineBreak: false,
+      });
+    });
   }
 
   private normalizeText(value?: string): string {
