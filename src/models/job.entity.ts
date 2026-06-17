@@ -60,6 +60,9 @@ export class Job extends BaseEntity {
   @Column({ name: 'agent_id', nullable: true })
   agentId: number;
 
+  @Column({ name: 'debt_amount', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  debtAmount: number | null;
+
   @Column({ length: 255, nullable: true })
   shipper: string;
 

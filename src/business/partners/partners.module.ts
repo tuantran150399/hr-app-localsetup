@@ -4,9 +4,10 @@ import { PartnersController } from './partners.controller';
 import { PartnersService } from './partners.service';
 import { Partner } from '../../models/partner.entity';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
+import { CustomerDebtModule } from '../customer-debt/customer-debt.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Partner]), AuditLogsModule],
+  imports: [TypeOrmModule.forFeature([Partner]), AuditLogsModule, CustomerDebtModule],
   controllers: [PartnersController],
   providers: [PartnersService],
 })

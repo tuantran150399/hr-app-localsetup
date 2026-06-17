@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
+import { Response } from 'express';
 import { DebitNotesService } from './debit-notes.service';
 import { CreateDebitNoteDto, UpdateDebitNoteDto, VoidDebitNoteDto, DebitNoteFilterDto, RecordDebitNotePaymentDto } from './dto/debit-note.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -34,6 +35,24 @@ export class DebitNotesController {
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthenticatedUser) {
     return this.svc.findOne(id, user);
+  }
+
+  @RequirePermission('accounting:view')
+  @Get(':id/export/excel')
+  async exportExcel(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthenticatedUser, @Res() res: Response) {
+    const exported = await this.svc.exportExcel(id, user);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${exported.fileName}"`);
+    res.send(exported.buffer);
+  }
+
+  @RequirePermission('accounting:view')
+  @Get(':id/export/pdf')
+  async exportPdf(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthenticatedUser, @Res() res: Response) {
+    const exported = await this.svc.exportPdf(id, user);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${exported.fileName}"`);
+    res.send(exported.buffer);
   }
 
   @RequirePermission('accounting:create')

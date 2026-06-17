@@ -7,6 +7,12 @@ export class DebtPolicy extends BaseEntity {
   @Column({ name: 'partner_id' })
   partnerId: number;
 
+  @Column({ name: 'start_date', type: 'date' })
+  startDate: Date;
+
+  @Column({ name: 'end_date', type: 'date', nullable: true })
+  endDate: Date | null;
+
   @Column({ name: 'max_debt_amount', type: 'decimal', precision: 18, scale: 4, nullable: true })
   maxDebtAmount: number;
 

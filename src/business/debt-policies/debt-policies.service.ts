@@ -6,6 +6,7 @@ import { Partner, PartnerType } from '../../models/partner.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
 import { DebtPolicyFilterDto, UpsertDebtPolicyDto } from './dto/debt-policy.dto';
+import { CustomerDebtService } from '../customer-debt/customer-debt.service';
 
 @Injectable()
 export class DebtPoliciesService {
@@ -13,12 +14,16 @@ export class DebtPoliciesService {
     @InjectRepository(DebtPolicy) private repo: Repository<DebtPolicy>,
     @InjectRepository(Partner) private partnerRepo: Repository<Partner>,
     private auditLogs: AuditLogsService,
+    private customerDebtService: CustomerDebtService,
   ) {}
 
   async upsert(dto: UpsertDebtPolicyDto, actorId: number) {
     const partner = await this.partnerRepo.findOne({ where: { id: dto.partnerId } });
     if (!partner || ![PartnerType.CUSTOMER, PartnerType.BOTH].includes(partner.partnerType)) {
       throw new BadRequestException(`Customer #${dto.partnerId} not found`);
+    }
+    if (dto.endDate && dto.endDate < dto.startDate) {
+      throw new BadRequestException('Debt policy end date must be on or after start date');
     }
 
     const existing = await this.repo.findOne({ where: { partnerId: dto.partnerId } });
@@ -38,11 +43,14 @@ export class DebtPoliciesService {
       userId: actorId,
       newValues: {
         partnerId: policy.partnerId,
+        startDate: policy.startDate,
+        endDate: policy.endDate,
         maxDebtAmount: policy.maxDebtAmount,
         maxDebtAgeDays: policy.maxDebtAgeDays,
         isActive: policy.isActive,
       },
     });
+    await this.customerDebtService.refreshPartnerActualDebt(policy.partnerId);
     return policy;
   }
 

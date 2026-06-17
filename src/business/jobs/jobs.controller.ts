@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Patch, Delete, Body, Param, ParseIntPipe, UseGuards, Query } from '@nestjs/common';
 import { JobsService } from './jobs.service';
-import { CreateJobDto, UpdateJobDto, JobFilterDto, CreateMilestoneDto, UpdateMilestoneDto } from './dto/job.dto';
+import { CreateJobDto, UpdateJobDto, JobFilterDto, CreateMilestoneDto, UpdateMilestoneDto, JobDebtPreviewDto } from './dto/job.dto';
 import { JobStatus } from '../../models/job.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -16,6 +16,11 @@ export class JobsController {
   @Post()
   create(@Body() dto: CreateJobDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
     return this.svc.create(dto, user.id, user);
+  }
+
+  @Post('debt-preview')
+  previewDebt(@Body() dto: JobDebtPreviewDto) {
+    return this.svc.previewDebt(dto);
   }
 
   @Get()

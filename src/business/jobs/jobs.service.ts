@@ -8,11 +8,11 @@ import { Branch } from '../../models/branch.entity';
 import { User } from '../../models/user.entity';
 import { RevenueEntry, AccountingStatus, PaymentStatus } from '../../models/revenue-entry.entity';
 import { CostEntry } from '../../models/cost-entry.entity';
-import { DebtPolicy } from '../../models/debt-policy.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
-import { CreateJobDto, UpdateJobDto, JobFilterDto, CreateMilestoneDto, UpdateMilestoneDto } from './dto/job.dto';
+import { CreateJobDto, UpdateJobDto, JobFilterDto, CreateMilestoneDto, UpdateMilestoneDto, JobDebtPreviewDto } from './dto/job.dto';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
 import { assertBranchAccess, AuthenticatedUser, getScopedBranchId } from '../../common/auth/branch-scope.util';
+import { CustomerDebtService } from '../customer-debt/customer-debt.service';
 
 @Injectable()
 export class JobsService {
@@ -24,8 +24,8 @@ export class JobsService {
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(RevenueEntry) private revenueRepo: Repository<RevenueEntry>,
     @InjectRepository(CostEntry) private costRepo: Repository<CostEntry>,
-    @InjectRepository(DebtPolicy) private debtPolicyRepo: Repository<DebtPolicy>,
     private auditLogs: AuditLogsService,
+    private customerDebtService: CustomerDebtService,
   ) {}
 
   private enforceBranchAccess(user: AuthenticatedUser | undefined, branchId?: number | null) {
@@ -66,10 +66,14 @@ export class JobsService {
     const exists = await this.repo.findOne({ where: { jobCode: dto.jobCode } });
     if (exists) throw new ConflictException('Job code already exists');
     await this.validateRefs(dto);
-    await this.assertDebtPolicyAllowsJob(dto.partnerId);
+    await this.ensureDebtLimit({
+      partnerId: dto.partnerId,
+      debtAmount: dto.debtAmount,
+    });
     const job = await this.repo.save(
       this.repo.create({ ...dto, status: JobStatus.DRAFT, createdBy: actorId, updatedBy: actorId }),
     );
+    await this.customerDebtService.refreshPartnerActualDebt(job.partnerId);
     this.auditLogs.logAsync({
       entityName: 'Job',
       entityId: job.id,
@@ -86,7 +90,11 @@ export class JobsService {
     if (exists) throw new ConflictException('Job code already exists');
     this.enforceBranchAccess(actor, dto.branchId ?? source.branchId);
     await this.validateRefs({ ...source, ...dto });
-    await this.assertDebtPolicyAllowsJob(dto.partnerId ?? source.partnerId);
+    await this.ensureDebtLimit({
+      partnerId: dto.partnerId ?? source.partnerId,
+      debtAmount: dto.debtAmount ?? source.debtAmount,
+      createdAt: source.createdAt,
+    });
 
     const { id, createdAt, updatedAt, closedAt, closedBy, archivedAt, archivedBy, ...sourceValues } = source;
     const job = await this.repo.save(
@@ -102,6 +110,7 @@ export class JobsService {
         updatedBy: actorId,
       }),
     );
+    await this.customerDebtService.refreshPartnerActualDebt(job.partnerId);
     this.auditLogs.logAsync({
       entityName: 'Job',
       entityId: job.id,
@@ -218,9 +227,16 @@ export class JobsService {
       throw new BadRequestException('Cannot edit a CLOSED or CANCELLED job');
     }
     this.enforceBranchAccess(actor, dto.branchId ?? job.branchId);
-    await this.validateRefs(dto, job.branchId);
+    await this.validateRefs(dto);
+    await this.ensureDebtLimit({
+      partnerId: dto.partnerId ?? job.partnerId,
+      debtAmount: dto.debtAmount ?? job.debtAmount,
+      jobId: id,
+      createdAt: job.createdAt,
+    });
     const oldValues = { jobCode: job.jobCode, partnerId: job.partnerId, branchId: job.branchId, status: job.status };
     const updated = await this.repo.save({ ...job, ...dto, updatedBy: actorId });
+    await this.refreshActualDebtForPartners([job.partnerId, updated.partnerId]);
     this.auditLogs.logAsync({
       entityName: 'Job',
       entityId: id,
@@ -235,6 +251,7 @@ export class JobsService {
   async archive(id: number, actorId: number, actor?: AuthenticatedUser) {
     const job = await this.findOne(id, actor);
     const updated = await this.repo.save({ ...job, archivedAt: new Date(), archivedBy: actorId, updatedBy: actorId });
+    await this.customerDebtService.refreshPartnerActualDebt(job.partnerId);
     this.auditLogs.logAsync({
       entityName: 'Job',
       entityId: id,
@@ -258,6 +275,7 @@ export class JobsService {
       update.closedBy = actorId;
     }
     const updated = await this.repo.save({ ...job, ...update });
+    await this.customerDebtService.refreshPartnerActualDebt(job.partnerId);
     this.auditLogs.logAsync({
       entityName: 'Job',
       entityId: id,
@@ -320,43 +338,34 @@ export class JobsService {
     return { message: 'Milestone deleted' };
   }
 
-  private async assertDebtPolicyAllowsJob(partnerId?: number): Promise<void> {
-    if (!partnerId) return;
-    const policy = await this.debtPolicyRepo.findOne({ where: { partnerId, isActive: true } });
-    if (!policy) return;
+  async previewDebt(dto: JobDebtPreviewDto) {
+    return this.customerDebtService.previewActualDebt({
+      partnerId: dto.partnerId,
+      currentJobId: dto.jobId,
+      currentJobDebtAmount: dto.debtAmount,
+    });
+  }
 
-    if (policy.maxDebtAmount !== null && policy.maxDebtAmount !== undefined) {
-      const row = await this.revenueRepo
-        .createQueryBuilder('r')
-        .innerJoin(Job, 'j', 'j.id = r.jobId')
-        .select('SUM(r.localAmount)', 'outstanding')
-        .where('j.partnerId = :partnerId', { partnerId })
-        .andWhere('r.status = :status', { status: AccountingStatus.POSTED })
-        .andWhere('r.paymentStatus IN (:...paymentStatuses)', {
-          paymentStatuses: [PaymentStatus.UNPAID, PaymentStatus.PARTIAL],
-        })
-        .getRawOne<{ outstanding: string | null }>();
-      const outstanding = Number(row?.outstanding ?? 0);
-      if (outstanding > Number(policy.maxDebtAmount)) {
-        throw new BadRequestException('Customer exceeds configured debt limit');
-      }
-    }
+  private async ensureDebtLimit(params: {
+    partnerId?: number;
+    debtAmount?: number | null;
+    jobId?: number;
+    createdAt?: Date | string | null;
+  }) {
+    const preview = await this.customerDebtService.previewActualDebt({
+      partnerId: params.partnerId,
+      currentJobId: params.jobId,
+      currentJobDebtAmount: params.debtAmount,
+      currentJobCreatedAt: params.createdAt,
+    });
 
-    if (policy.maxDebtAgeDays) {
-      const threshold = new Date();
-      threshold.setDate(threshold.getDate() - Number(policy.maxDebtAgeDays));
-      const overdue = await this.revenueRepo
-        .createQueryBuilder('r')
-        .innerJoin(Job, 'j', 'j.id = r.jobId')
-        .where('j.partnerId = :partnerId', { partnerId })
-        .andWhere('r.status = :status', { status: AccountingStatus.POSTED })
-        .andWhere('r.paymentStatus != :paid', { paid: PaymentStatus.PAID })
-        .andWhere('r.dueDate IS NOT NULL')
-        .andWhere('r.dueDate < :threshold', { threshold: threshold.toISOString().split('T')[0] })
-        .getOne();
-      if (overdue) {
-        throw new BadRequestException('Customer has overdue debt beyond configured policy');
-      }
+    if (preview.exceedsLimit) {
+      throw new BadRequestException('Customer exceeds configured debt limit');
     }
+  }
+
+  private async refreshActualDebtForPartners(partnerIds: Array<number | undefined | null>) {
+    const uniquePartnerIds = [...new Set(partnerIds.filter(Boolean))] as number[];
+    await Promise.all(uniquePartnerIds.map((partnerId) => this.customerDebtService.refreshPartnerActualDebt(partnerId)));
   }
 }
