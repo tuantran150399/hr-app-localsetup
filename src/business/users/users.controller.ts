@@ -7,6 +7,7 @@ import { BlockUserDto } from './dto/block-user.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { RequireRole } from '../auth/decorators/require-role.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -15,12 +16,14 @@ export class UsersController {
   constructor(private usersService: UsersService) {}
 
   @RequirePermission('user:manage')
+  @RequireRole('SUPER_ADMIN')
   @Post()
   create(@Body() dto: CreateUserDto, @CurrentUser() user: { id: number }) {
     return this.usersService.create(dto, user.id);
   }
 
   @RequirePermission('user:manage')
+  @RequireRole('SUPER_ADMIN')
   @Get()
   findAll() {
     return this.usersService.findAll();
@@ -32,18 +35,21 @@ export class UsersController {
   }
 
   @RequirePermission('user:manage')
+  @RequireRole('SUPER_ADMIN')
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.usersService.findOne(id);
   }
 
   @RequirePermission('user:manage')
+  @RequireRole('SUPER_ADMIN')
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto, @CurrentUser() user: { id: number }) {
     return this.usersService.update(id, dto, user.id);
   }
 
   @RequirePermission('user:manage')
+  @RequireRole('SUPER_ADMIN')
   @Patch(':id/block')
   block(
     @Param('id', ParseIntPipe) id: number,
@@ -54,6 +60,7 @@ export class UsersController {
   }
 
   @RequirePermission('user:manage')
+  @RequireRole('SUPER_ADMIN')
   @Patch(':id/unblock')
   unblock(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
     return this.usersService.unblock(id, user.id);
@@ -65,6 +72,7 @@ export class UsersController {
   }
 
   @RequirePermission('user:manage')
+  @RequireRole('SUPER_ADMIN')
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
     return this.usersService.remove(id, user.id);

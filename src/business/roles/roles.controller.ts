@@ -5,6 +5,7 @@ import { UpdateRoleDto } from './dto/update-role.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { RequireRole } from '../auth/decorators/require-role.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -13,30 +14,35 @@ export class RolesController {
   constructor(private rolesService: RolesService) {}
 
   @RequirePermission('role:manage')
+  @RequireRole('SUPER_ADMIN')
   @Post()
   create(@Body() dto: CreateRoleDto, @CurrentUser() user: { id: number }) {
     return this.rolesService.create(dto, user.id);
   }
 
   @RequirePermission('role:manage')
+  @RequireRole('SUPER_ADMIN')
   @Get()
   findAll() {
     return this.rolesService.findAll();
   }
 
   @RequirePermission('role:manage')
+  @RequireRole('SUPER_ADMIN')
   @Get('permissions')
   findAllPermissions() {
     return this.rolesService.findAllPermissions();
   }
 
   @RequirePermission('role:manage')
+  @RequireRole('SUPER_ADMIN')
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.rolesService.findOne(id);
   }
 
   @RequirePermission('role:manage')
+  @RequireRole('SUPER_ADMIN')
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateRoleDto, @CurrentUser() user: { id: number }) {
     return this.rolesService.update(id, dto, user.id);

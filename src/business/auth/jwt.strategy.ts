@@ -34,12 +34,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const user = await this.userRepo.findOne({ where: { id: payload.sub, isActive: true } });
     if (!user) throw new UnauthorizedException();
     if (isUserBlocked(user)) throw new UnauthorizedException('Account is blocked');
+    const roles = (user.roles || []).map((role) => role.name);
     return {
       id: user.id,
       username: user.username,
       branchId: user.branchId,
       canAccessAllBranches: user.canAccessAllBranches,
-      roles: payload.roles,
+      roles,
       permissions: payload.permissions,
     };
   }
