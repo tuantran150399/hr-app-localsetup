@@ -24,32 +24,32 @@ export class HrController {
 
   @RequirePermission('hr:manage')
   @Post('employees')
-  createEmployee(@Body() dto: CreateEmployeeDto, @CurrentUser() user: { id: number }) {
-    return this.svc.createEmployee(dto, user.id);
+  createEmployee(@Body() dto: CreateEmployeeDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.createEmployee(dto, user.id, user);
   }
 
   @RequirePermission('hr:view')
   @Get('employees')
-  findEmployees(@Query() filter: EmployeeFilterDto) {
-    return this.svc.findEmployees(filter);
+  findEmployees(@Query() filter: EmployeeFilterDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.findEmployees(filter, user);
   }
 
   @RequirePermission('hr:view')
   @Get('employees/:id')
-  findEmployee(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.findEmployee(id);
+  findEmployee(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.findEmployee(id, user);
   }
 
   @RequirePermission('hr:manage')
   @Patch('employees/:id')
-  updateEmployee(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateEmployeeDto, @CurrentUser() user: { id: number }) {
-    return this.svc.updateEmployee(id, dto, user.id);
+  updateEmployee(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateEmployeeDto, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.updateEmployee(id, dto, user.id, user);
   }
 
   @RequirePermission('hr:manage')
   @Delete('employees/:id')
-  deactivateEmployee(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
-    return this.svc.deactivateEmployee(id, user.id);
+  deactivateEmployee(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number; branchId?: number; roles?: string[] }) {
+    return this.svc.deactivateEmployee(id, user.id, user);
   }
 
   @RequirePermission('hr:manage')

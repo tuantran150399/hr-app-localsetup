@@ -2,6 +2,7 @@ export interface AuthenticatedUser {
   id: number;
   username?: string;
   branchId?: number | null;
+  canAccessAllBranches?: boolean;
   roles?: string[];
   permissions?: string[];
 }
@@ -9,7 +10,7 @@ export interface AuthenticatedUser {
 const GLOBAL_BRANCH_ROLES = new Set(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
 
 export function canAccessAllBranches(user?: AuthenticatedUser | null) {
-  return (user?.roles ?? []).some((role) => GLOBAL_BRANCH_ROLES.has(role));
+  return Boolean(user?.canAccessAllBranches) || (user?.roles ?? []).some((role) => GLOBAL_BRANCH_ROLES.has(role));
 }
 
 export function getScopedBranchId(user?: AuthenticatedUser | null, requestedBranchId?: number | null) {

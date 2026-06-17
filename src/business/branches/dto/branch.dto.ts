@@ -4,6 +4,7 @@ export class CreateBranchDto {
   @IsNotEmpty() @IsString() code: string;
   @IsNotEmpty() @IsString() name: string;
   @IsOptional() @IsString() address?: string;
+  @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
 export class UpdateBranchDto {

@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../../models/user.entity';
+import { isUserBlocked } from '../../common/auth/user-access.util';
 
 export interface JwtPayload {
   sub: number;
@@ -12,6 +13,7 @@ export interface JwtPayload {
   roles: string[];
   permissions: string[];
   branchId?: number | null;
+  canAccessAllBranches?: boolean;
 }
 
 @Injectable()
@@ -31,10 +33,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload) {
     const user = await this.userRepo.findOne({ where: { id: payload.sub, isActive: true } });
     if (!user) throw new UnauthorizedException();
+    if (isUserBlocked(user)) throw new UnauthorizedException('Account is blocked');
     return {
       id: user.id,
       username: user.username,
       branchId: user.branchId,
+      canAccessAllBranches: user.canAccessAllBranches,
       roles: payload.roles,
       permissions: payload.permissions,
     };

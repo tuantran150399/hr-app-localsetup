@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { PartialType } from '@nestjs/mapped-types';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 import { AdvanceStatus } from '../../../models/employee-advance.entity';
 import { PaymentMethod } from '../../../models/revenue-entry.entity';
@@ -13,6 +14,8 @@ export class CreateAdvanceDto {
   @IsOptional() @IsString() purpose?: string;
   @IsOptional() @IsEnum(PaymentMethod) paymentMethod?: PaymentMethod;
 }
+
+export class UpdateAdvanceDto extends PartialType(CreateAdvanceDto) {}
 
 export class AdvanceFilterDto extends PaginationDto {
   @IsOptional() @Type(() => Number) @IsInt() employeeId?: number;
