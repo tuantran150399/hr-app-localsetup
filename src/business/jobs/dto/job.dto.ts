@@ -24,6 +24,10 @@ export class CreateJobDto {
   @IsOptional() @IsString() hbl?: string;
   @IsOptional() @IsString() mbl?: string;
   @IsOptional() @IsString() containerNo?: string;
+  @IsOptional() @IsString() cargoUnit?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) cargoQuantity?: number | null;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) weightKg?: number | null;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) volumeCbm?: number | null;
   @IsOptional() @IsString() sealNo?: string;
   @IsOptional() @IsDateString() etd?: string;
   @IsOptional() @IsDateString() eta?: string;
@@ -59,6 +63,10 @@ export class UpdateJobDto {
   @IsOptional() @IsString() hbl?: string;
   @IsOptional() @IsString() mbl?: string;
   @IsOptional() @IsString() containerNo?: string;
+  @IsOptional() @IsString() cargoUnit?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) cargoQuantity?: number | null;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) weightKg?: number | null;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) volumeCbm?: number | null;
   @IsOptional() @IsString() sealNo?: string;
   @IsOptional() @IsDateString() etd?: string;
   @IsOptional() @IsDateString() eta?: string;

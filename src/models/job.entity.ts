@@ -100,6 +100,18 @@ export class Job extends BaseEntity {
   @Column({ name: 'container_no', length: 100, nullable: true })
   containerNo: string;
 
+  @Column({ name: 'cargo_unit', length: 30, nullable: true })
+  cargoUnit: string;
+
+  @Column({ name: 'cargo_quantity', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  cargoQuantity: number | null;
+
+  @Column({ name: 'weight_kg', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  weightKg: number | null;
+
+  @Column({ name: 'volume_cbm', type: 'decimal', precision: 18, scale: 4, nullable: true })
+  volumeCbm: number | null;
+
   @Column({ name: 'seal_no', length: 100, nullable: true })
   sealNo: string;
 
