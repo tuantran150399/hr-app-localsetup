@@ -3,16 +3,25 @@ import { BaseEntity } from './base.entity';
 import { PaymentMethod } from './revenue-entry.entity';
 
 export enum PaymentRequestStatus {
+  DRAFT = 'DRAFT',
   PENDING_DEPARTMENT_APPROVAL = 'PENDING_DEPARTMENT_APPROVAL',
   DEPARTMENT_APPROVED = 'DEPARTMENT_APPROVED',
-  REJECTED = 'REJECTED',
+  REJECTED_BY_DEPARTMENT = 'REJECTED_BY_DEPARTMENT',
+  REJECTED_BY_DIRECTOR = 'REJECTED_BY_DIRECTOR',
   FINAL_APPROVED = 'FINAL_APPROVED',
+  PAID = 'PAID',
 }
 
 @Entity('payment_requests')
 export class PaymentRequest extends BaseEntity {
+  @Column({ name: 'request_code', length: 30, unique: true, nullable: true })
+  requestCode: string;
+
   @Column({ name: 'branch_id', nullable: true })
   branchId: number;
+
+  @Column({ name: 'request_department', length: 100, nullable: true })
+  requestDepartment: string;
 
   @Column({ name: 'job_id', nullable: true })
   jobId: number;
@@ -65,11 +74,17 @@ export class PaymentRequest extends BaseEntity {
   @Column({ name: 'department_approved_by', nullable: true })
   departmentApprovedBy: number;
 
+  @Column({ name: 'department_approval_comment', type: 'text', nullable: true })
+  departmentApprovalComment: string;
+
   @Column({ name: 'final_approved_at', type: 'datetime', nullable: true })
   finalApprovedAt: Date;
 
   @Column({ name: 'final_approved_by', nullable: true })
   finalApprovedBy: number;
+
+  @Column({ name: 'final_approval_comment', type: 'text', nullable: true })
+  finalApprovalComment: string;
 
   @Column({ name: 'rejected_at', type: 'datetime', nullable: true })
   rejectedAt: Date;
@@ -79,4 +94,10 @@ export class PaymentRequest extends BaseEntity {
 
   @Column({ name: 'reject_reason', type: 'text', nullable: true })
   rejectReason: string;
+
+  @Column({ name: 'paid_at', type: 'datetime', nullable: true })
+  paidAt: Date;
+
+  @Column({ name: 'paid_by', nullable: true })
+  paidBy: number;
 }

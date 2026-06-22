@@ -25,8 +25,23 @@ export class Notification {
   @Column({ name: 'entity_id', nullable: true })
   entityId: number;
 
+  @Column({ name: 'event_ref', length: 100, nullable: true })
+  eventRef: string;
+
+  @Column({ name: 'action_url', length: 255, nullable: true })
+  actionUrl: string;
+
+  @Column({ name: 'action_label', length: 100, nullable: true })
+  actionLabel: string;
+
+  @Column({ length: 20, default: 'normal' })
+  priority: string;
+
   @Column({ name: 'is_read', default: false })
   isRead: boolean;
+
+  @Column({ name: 'read_at', type: 'datetime', nullable: true })
+  readAt: Date;
 
   @Column({ name: 'created_at', type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;

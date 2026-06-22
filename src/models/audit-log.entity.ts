@@ -28,6 +28,9 @@ export class AuditLog {
   @Column({ name: 'ip_address', length: 50, nullable: true })
   ipAddress: string;
 
+  @Column({ name: 'user_agent', length: 500, nullable: true })
+  userAgent: string;
+
   @Column({ name: 'created_at', type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
 }

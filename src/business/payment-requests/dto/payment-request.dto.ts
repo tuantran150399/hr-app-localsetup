@@ -56,6 +56,12 @@ export class RejectPaymentRequestDto {
   reason: string;
 }
 
+export class ApprovePaymentRequestDto {
+  @IsOptional()
+  @IsString()
+  comment?: string;
+}
+
 export class PaymentRequestFilterDto extends PaginationDto {
   @IsOptional()
   @Type(() => Number)

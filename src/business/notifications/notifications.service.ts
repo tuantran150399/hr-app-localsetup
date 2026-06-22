@@ -36,11 +36,12 @@ export class NotificationsService {
     const notif = await this.repo.findOne({ where: { id, userId } });
     if (!notif) throw new NotFoundException('Notification not found');
     notif.isRead = true;
+    notif.readAt = new Date();
     return this.repo.save(notif);
   }
 
   async markAllAsRead(userId: number) {
-    await this.repo.update({ userId, isRead: false }, { isRead: true });
+    await this.repo.update({ userId, isRead: false }, { isRead: true, readAt: new Date() });
     return { success: true };
   }
 
@@ -59,6 +60,10 @@ export class NotificationsService {
     message?: string;
     entityType?: string;
     entityId?: number;
+    eventRef?: string;
+    actionUrl?: string;
+    actionLabel?: string;
+    priority?: string;
   }) {
     const notif = this.repo.create({
       userId,
@@ -67,6 +72,10 @@ export class NotificationsService {
       message: data.message,
       entityType: data.entityType,
       entityId: data.entityId,
+      eventRef: data.eventRef,
+      actionUrl: data.actionUrl,
+      actionLabel: data.actionLabel,
+      priority: data.priority || 'normal',
       isRead: false,
     });
     return this.repo.save(notif);
@@ -79,6 +88,10 @@ export class NotificationsService {
     message?: string;
     entityType?: string;
     entityId?: number;
+    eventRef?: string;
+    actionUrl?: string;
+    actionLabel?: string;
+    priority?: string;
   }) {
     const notifications = userIds.map((userId) =>
       this.repo.create({
@@ -88,6 +101,10 @@ export class NotificationsService {
         message: data.message,
         entityType: data.entityType,
         entityId: data.entityId,
+        eventRef: data.eventRef,
+        actionUrl: data.actionUrl,
+        actionLabel: data.actionLabel,
+        priority: data.priority || 'normal',
         isRead: false,
       }),
     );
