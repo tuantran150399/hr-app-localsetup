@@ -114,7 +114,7 @@ export class AuditLogsService {
   private queryJobs(ids: number[]) {
     if (!ids.length) return Promise.resolve([]);
     return this.dataSource.query(`
-      SELECT j.id, 'Job' AS entityName, j.job_code AS code, j.job_code AS displayName,
+      SELECT j.id, 'Job' AS entityName, j.jobCode AS code, j.jobCode AS displayName,
              j.booking_ref AS bookingRef, j.hbl, j.mbl, j.container_no AS containerNo,
              p.code AS partnerCode, p.name AS partnerName,
              b.code AS branchCode, b.name AS branchName
@@ -130,7 +130,7 @@ export class AuditLogsService {
       SELECT pr.id, 'PaymentRequest' AS entityName, pr.request_code AS code,
              COALESCE(pr.request_code, CONCAT('Đề nghị #', pr.id)) AS displayName,
              pr.amount, pr.currency, pr.reason AS description,
-             j.job_code AS jobCode, j.booking_ref AS bookingRef,
+             j.jobCode AS jobCode, j.booking_ref AS bookingRef,
              v.code AS partnerCode, v.name AS partnerName,
              b.code AS branchCode, b.name AS branchName
       FROM payment_requests pr LEFT JOIN jobs j ON j.id = pr.job_id
@@ -164,7 +164,7 @@ export class AuditLogsService {
     if (!ids.length) return Promise.resolve([]);
     return this.dataSource.query(`
       SELECT c.id, 'CobEntry' AS entityName, CONCAT('Thu/Chi hộ #', c.id) AS displayName,
-             c.description, c.amount, c.currency, j.job_code AS jobCode,
+             c.description, c.amount, c.currency, j.jobCode AS jobCode,
              p.code AS partnerCode, p.name AS partnerName
       FROM cob_entries c LEFT JOIN jobs j ON j.id = c.job_id
       LEFT JOIN partners p ON p.id = c.partner_id
@@ -176,7 +176,7 @@ export class AuditLogsService {
     if (!ids.length) return Promise.resolve([]);
     return this.dataSource.query(`
       SELECT d.id, 'DebitNote' AS entityName, CONCAT('Debit Note #', d.id) AS displayName,
-             d.description, d.amount, d.currency, j.job_code AS jobCode,
+             d.description, d.amount, d.currency, j.jobCode AS jobCode,
              p.code AS partnerCode, p.name AS partnerName
       FROM debit_notes d LEFT JOIN jobs j ON j.id = d.job_id
       LEFT JOIN partners p ON p.id = d.partner_id
@@ -191,7 +191,7 @@ export class AuditLogsService {
       if (!ids.length) continue;
       const rows = await this.dataSource.query(`
         SELECT e.id, '${entityName}' AS entityName, CONCAT('${entityName} #', e.id) AS displayName,
-               e.description, e.amount, e.currency, j.job_code AS jobCode,
+               e.description, e.amount, e.currency, j.jobCode AS jobCode,
                p.code AS partnerCode, p.name AS partnerName
         FROM ${table} e LEFT JOIN jobs j ON j.id = e.job_id
         LEFT JOIN partners p ON p.id = j.partner_id
