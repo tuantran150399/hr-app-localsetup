@@ -18,6 +18,7 @@ export class PricingService {
 
   async create(dto: CreateServicePriceDto, actorId: number) {
     await this.assertPartner(dto.partnerId);
+    this.assertQuantityRange(dto);
     const price = await this.repo.save(this.repo.create({ ...this.normalizePriceDto(dto), createdBy: actorId, updatedBy: actorId }));
     this.auditLogs.logAsync({ entityName: 'ServicePrice', entityId: price.id, action: 'CREATE', userId: actorId, newValues: price });
     return price;
@@ -46,6 +47,7 @@ export class PricingService {
   async update(id: number, dto: UpdateServicePriceDto, actorId: number) {
     const current = await this.findOne(id);
     await this.assertPartner(dto.partnerId);
+    this.assertQuantityRange({ ...current, ...dto });
     const updated = await this.repo.save({ ...current, ...this.normalizePriceDto(dto), updatedBy: actorId });
     this.auditLogs.logAsync({ entityName: 'ServicePrice', entityId: id, action: 'UPDATE', userId: actorId, oldValues: current, newValues: updated });
     return updated;
@@ -252,6 +254,17 @@ export class PricingService {
 
   private normalizeText(value?: string): string {
     return String(value ?? '').trim().toLowerCase();
+  }
+
+  private assertQuantityRange(dto: {
+    minQuantity?: number | null;
+    maxQuantity?: number | null;
+  }) {
+    const minQuantity = dto.minQuantity === undefined || dto.minQuantity === null ? null : Number(dto.minQuantity);
+    const maxQuantity = dto.maxQuantity === undefined || dto.maxQuantity === null ? null : Number(dto.maxQuantity);
+    if (minQuantity !== null && maxQuantity !== null && minQuantity > maxQuantity) {
+      throw new BadRequestException('Min quantity cannot be greater than max quantity');
+    }
   }
 
 }

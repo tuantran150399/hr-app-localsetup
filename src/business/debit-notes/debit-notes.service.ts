@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import ExcelJS from 'exceljs';
 import PDFDocument = require('pdfkit');
 import { existsSync } from 'fs';
@@ -44,6 +44,7 @@ export class DebitNotesService {
     const saved = await this.dataSource.transaction(async (em) => {
       const job = await this.assertJob(dto.jobId);
       this.enforceBranchAccess(actor, job.branchId);
+      await this.validateLineItemsAgainstPricing(em, dto.lineItems || []);
       const totalAmount = this.calculateLineTotal(dto.lineItems, dto.amount);
       const note = await em.save(DebitNote, em.create(DebitNote, {
         partnerId: job.partnerId,
@@ -107,6 +108,9 @@ export class DebitNotesService {
     return this.dataSource.transaction(async (em) => {
       const job = dto.jobId ? await this.assertJob(dto.jobId) : await this.assertJob(note.jobId);
       this.enforceBranchAccess(actor, job.branchId);
+      if (dto.lineItems) {
+        await this.validateLineItemsAgainstPricing(em, dto.lineItems);
+      }
       Object.assign(note, {
         partnerId: job.partnerId,
         jobId: job.id,
@@ -425,6 +429,37 @@ export class DebitNotesService {
       const lineAmount = Number(item.amount || 0) || Number(item.quantity || 1) * Number(item.unitPrice || 0);
       return sum + lineAmount;
     }, 0);
+  }
+
+  private async validateLineItemsAgainstPricing(em: EntityManager, lineItems: CreateDebitNoteDto['lineItems']) {
+    if (!lineItems?.length) return;
+
+    const pricingIds = [...new Set(lineItems.map((item) => item.pricingId).filter((id): id is number => Number.isFinite(id)))];
+    if (!pricingIds.length) return;
+
+    const prices = await em.find(ServicePrice, { where: { id: In(pricingIds) } });
+    const priceMap = new Map(prices.map((price) => [price.id, price]));
+
+    lineItems.forEach((item, index) => {
+      if (!item.pricingId) return;
+
+      const price = priceMap.get(item.pricingId);
+      if (!price) {
+        throw new BadRequestException(`Pricing #${item.pricingId} not found for line ${index + 1}`);
+      }
+
+      const quantity = Number(item.quantity || 1);
+      const minQuantity = price.minQuantity === null || price.minQuantity === undefined ? null : Number(price.minQuantity);
+      const maxQuantity = price.maxQuantity === null || price.maxQuantity === undefined ? null : Number(price.maxQuantity);
+
+      if (minQuantity !== null && quantity < minQuantity) {
+        throw new BadRequestException(`Line ${index + 1} quantity is below the minimum allowed (${minQuantity})`);
+      }
+
+      if (maxQuantity !== null && quantity > maxQuantity) {
+        throw new BadRequestException(`Line ${index + 1} quantity exceeds the maximum allowed (${maxQuantity})`);
+      }
+    });
   }
 
   private async saveLineItems(em: EntityManager, debitNoteId: number, lineItems: CreateDebitNoteDto['lineItems'], currency: string) {
