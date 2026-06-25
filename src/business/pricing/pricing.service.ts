@@ -25,12 +25,16 @@ export class PricingService {
   }
 
   async findAll(filter: ServicePriceFilterDto = {}) {
-    const { page = 1, limit = 20, keyword, partnerId, serviceType, shipmentMode, isActive } = filter;
+    const { page = 1, limit = 20, keyword, partnerId, pricingCategory, serviceType, shipmentMode, isActive } = filter;
     const qb = this.repo.createQueryBuilder('p');
     if (keyword) {
-      qb.andWhere('(p.routeFrom LIKE :kw OR p.routeTo LIKE :kw OR p.unit LIKE :kw OR p.notes LIKE :kw)', { kw: `%${keyword}%` });
+      qb.andWhere(
+        '(p.pricingCategory LIKE :kw OR p.chargeName LIKE :kw OR p.routeFrom LIKE :kw OR p.routeTo LIKE :kw OR p.unit LIKE :kw OR p.containerSize LIKE :kw OR p.vehicleType LIKE :kw OR p.notes LIKE :kw)',
+        { kw: `%${keyword}%` },
+      );
     }
     if (partnerId) qb.andWhere('p.partnerId = :partnerId', { partnerId });
+    if (pricingCategory) qb.andWhere('p.pricingCategory = :pricingCategory', { pricingCategory });
     if (serviceType) qb.andWhere('p.serviceType = :serviceType', { serviceType });
     if (shipmentMode) qb.andWhere('p.shipmentMode = :shipmentMode', { shipmentMode });
     if (isActive !== undefined) qb.andWhere('p.isActive = :isActive', { isActive });
@@ -68,6 +72,13 @@ export class PricingService {
       .andWhere('p.partnerId = :partnerId', { partnerId: dto.partnerId ?? 0 })
       .andWhere('(p.effectiveFrom IS NULL OR p.effectiveFrom <= :serviceDate)', { serviceDate })
       .andWhere('(p.effectiveTo IS NULL OR p.effectiveTo >= :serviceDate)', { serviceDate });
+    const addDetailFilters = (qb: ReturnType<typeof baseQb>) => {
+      if (dto.pricingCategory) qb.andWhere('p.pricingCategory = :pricingCategory', { pricingCategory: dto.pricingCategory });
+      if (dto.direction) qb.andWhere('p.direction = :direction', { direction: dto.direction });
+      if (dto.containerSize) qb.andWhere('p.containerSize = :containerSize', { containerSize: dto.containerSize });
+      if (dto.vehicleType) qb.andWhere('p.vehicleType = :vehicleType', { vehicleType: dto.vehicleType });
+      return qb;
+    };
     const addQuantityFilter = (qb: ReturnType<typeof baseQb>) => {
       if (dto.quantity !== undefined) {
         qb.andWhere('(p.minQuantity IS NULL OR p.minQuantity <= :quantity)', { quantity: dto.quantity })
@@ -80,6 +91,10 @@ export class PricingService {
     const routeTo = this.normalizeText(dto.routeTo);
     if (routeFrom && routeTo) {
       const routePrice = await addQuantityFilter(baseQb())
+        .andWhere(dto.pricingCategory ? 'p.pricingCategory = :pricingCategory' : '1=1', { pricingCategory: dto.pricingCategory })
+        .andWhere(dto.direction ? 'p.direction = :direction' : '1=1', { direction: dto.direction })
+        .andWhere(dto.containerSize ? 'p.containerSize = :containerSize' : '1=1', { containerSize: dto.containerSize })
+        .andWhere(dto.vehicleType ? 'p.vehicleType = :vehicleType' : '1=1', { vehicleType: dto.vehicleType })
         .andWhere('LOWER(TRIM(p.routeFrom)) = :routeFrom', { routeFrom })
         .andWhere('LOWER(TRIM(p.routeTo)) = :routeTo', { routeTo })
         .orderBy('p.effectiveFrom', 'DESC')
@@ -87,7 +102,7 @@ export class PricingService {
       if (routePrice) return routePrice;
     }
 
-    return addQuantityFilter(baseQb())
+    return addDetailFilters(addQuantityFilter(baseQb()))
       .andWhere('(p.routeFrom IS NULL OR TRIM(p.routeFrom) = \'\')')
       .andWhere('(p.routeTo IS NULL OR TRIM(p.routeTo) = \'\')')
       .orderBy('p.effectiveFrom', 'DESC')
@@ -194,14 +209,20 @@ export class PricingService {
 
     const dto: CreateServicePriceDto = {
       partnerId,
+      pricingCategory: this.readString(row, 'pricingCategory', 'pricing_category', 'category', 'section'),
+      chargeName: this.readString(row, 'chargeName', 'charge_name', 'charge', 'feeName', 'fee_name', 'description'),
       serviceType: serviceType as PricingServiceType,
       shipmentMode: this.readString(row, 'shipmentMode', 'shipment_mode', 'mode'),
+      direction: this.readString(row, 'direction', 'importExport', 'import_export'),
+      containerSize: this.readString(row, 'containerSize', 'container_size', 'contSize', 'cont_size'),
+      vehicleType: this.readString(row, 'vehicleType', 'vehicle_type', 'truckType', 'truck_type'),
       routeFrom: this.readString(row, 'routeFrom', 'route_from', 'origin'),
       routeTo: this.readString(row, 'routeTo', 'route_to', 'destination'),
       unit: this.readString(row, 'unit', 'uom', 'size'),
       minQuantity: toNumber(pickCell(row, 'minQuantity', 'min_quantity')),
       maxQuantity: toNumber(pickCell(row, 'maxQuantity', 'max_quantity')),
       currency: this.readString(row, 'currency'),
+      calculationType: this.readString(row, 'calculationType', 'calculation_type', 'calcType', 'calc_type'),
       amount,
       effectiveFrom: toDateString(pickCell(row, 'effectiveFrom', 'effective_from', 'validFrom', 'valid_from')),
       effectiveTo: toDateString(pickCell(row, 'effectiveTo', 'effective_to', 'validity', 'validTo', 'valid_to')),
@@ -236,11 +257,17 @@ export class PricingService {
   private normalizePriceDto<T extends CreateServicePriceDto | UpdateServicePriceDto>(dto: T): T {
     return {
       ...dto,
+      pricingCategory: this.normalizeNullableString(dto.pricingCategory)?.toUpperCase(),
+      chargeName: this.normalizeNullableString(dto.chargeName),
       routeFrom: this.normalizeNullableString(dto.routeFrom),
       routeTo: this.normalizeNullableString(dto.routeTo),
       shipmentMode: this.normalizeNullableString(dto.shipmentMode),
+      direction: this.normalizeNullableString(dto.direction)?.toUpperCase(),
+      containerSize: this.normalizeNullableString(dto.containerSize)?.toUpperCase(),
+      vehicleType: this.normalizeNullableString(dto.vehicleType)?.toUpperCase(),
       unit: this.normalizeNullableString(dto.unit)?.toUpperCase(),
       currency: this.normalizeNullableString(dto.currency)?.toUpperCase(),
+      calculationType: this.normalizeNullableString(dto.calculationType)?.toUpperCase() || 'FIXED',
       effectiveFrom: this.normalizeNullableString(dto.effectiveFrom),
       effectiveTo: this.normalizeNullableString(dto.effectiveTo),
       notes: this.normalizeNullableString(dto.notes),
