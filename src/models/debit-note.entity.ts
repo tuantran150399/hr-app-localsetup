@@ -29,6 +29,33 @@ export class DebitNote extends BaseEntity {
   @Column({ name: 'due_date', type: 'date', nullable: true })
   dueDate: Date;
 
+  @Column({ name: 'reference_no', length: 100, nullable: true })
+  referenceNo: string;
+
+  @Column({ name: 'group_code', length: 100, nullable: true })
+  groupCode: string;
+
+  @Column({ name: 'payment_term', length: 100, nullable: true })
+  paymentTerm: string;
+
+  @Column({ name: 'moving_type', length: 100, nullable: true })
+  movingType: string;
+
+  @Column({ length: 100, nullable: true })
+  direction: string;
+
+  @Column({ name: 'mbl_no', length: 100, nullable: true })
+  mblNo: string;
+
+  @Column({ name: 'export_note', type: 'text', nullable: true })
+  exportNote: string;
+
+  @Column({ name: 'bank_name', length: 150, nullable: true })
+  bankName: string;
+
+  @Column({ name: 'bank_account_no', length: 100, nullable: true })
+  bankAccountNo: string;
+
   @Column({ type: 'text', nullable: true })
   description: string;
 
@@ -62,6 +89,15 @@ export class DebitNote extends BaseEntity {
 
   @Column({ name: 'receivable_entry_id', nullable: true })
   receivableEntryId: number;
+
+  @Column({ name: 'locked_at', type: 'datetime', nullable: true })
+  lockedAt: Date;
+
+  @Column({ name: 'locked_by', nullable: true })
+  lockedBy: number;
+
+  @Column({ name: 'lock_reason', type: 'text', nullable: true })
+  lockReason: string;
 
   @Column({
     type: 'enum',

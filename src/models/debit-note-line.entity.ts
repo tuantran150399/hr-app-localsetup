@@ -6,11 +6,20 @@ export class DebitNoteLine extends BaseEntity {
   @Column({ name: 'debit_note_id' })
   debitNoteId: number;
 
+  @Column({ name: 'job_id', nullable: true })
+  jobId: number;
+
   @Column({ name: 'service_type', length: 50, nullable: true })
   serviceType: string;
 
   @Column({ length: 300, nullable: true })
   description: string;
+
+  @Column({ name: 'charge_note', length: 200, nullable: true })
+  chargeNote: string;
+
+  @Column({ name: 'line_note', type: 'text', nullable: true })
+  lineNote: string;
 
   @Column({ type: 'int', default: 1 })
   quantity: number;
@@ -20,6 +29,15 @@ export class DebitNoteLine extends BaseEntity {
 
   @Column({ type: 'decimal', precision: 18, scale: 4, default: 0 })
   amount: number;
+
+  @Column({ name: 'credit_amount', type: 'decimal', precision: 18, scale: 4, default: 0 })
+  creditAmount: number;
+
+  @Column({ name: 'vat_rate', type: 'decimal', precision: 8, scale: 4, default: 0 })
+  vatRate: number;
+
+  @Column({ name: 'vat_amount', type: 'decimal', precision: 18, scale: 4, default: 0 })
+  vatAmount: number;
 
   @Column({ length: 10, default: 'VND' })
   currency: string;

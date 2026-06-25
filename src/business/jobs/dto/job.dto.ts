@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsEnum, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsDateString, IsEnum, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { JobStatus, JobType, ShipmentMode } from '../../../models/job.entity';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
@@ -40,6 +40,7 @@ export class CreateJobDto {
   @IsOptional() @IsString() destination?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() internalNotes?: string;
+  @IsOptional() @IsBoolean() confirmDebitNoteLock?: boolean;
 }
 
 export class UpdateJobDto {
@@ -79,6 +80,7 @@ export class UpdateJobDto {
   @IsOptional() @IsString() destination?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() internalNotes?: string;
+  @IsOptional() @IsBoolean() confirmDebitNoteLock?: boolean;
 }
 
 export class JobFilterDto extends PaginationDto {

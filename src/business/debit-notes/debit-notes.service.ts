@@ -7,7 +7,7 @@ import { existsSync } from 'fs';
 import { DebitNote, DebitNoteStatus } from '../../models/debit-note.entity';
 import { DebitNoteLine } from '../../models/debit-note-line.entity';
 import { ServicePrice } from '../../models/service-price.entity';
-import { Job } from '../../models/job.entity';
+import { Job, JobStatus } from '../../models/job.entity';
 import { Partner } from '../../models/partner.entity';
 import { Branch } from '../../models/branch.entity';
 import { AccountingStatus, PaymentStatus, RevenueEntry } from '../../models/revenue-entry.entity';
@@ -18,6 +18,12 @@ import { assertBranchAccess, AuthenticatedUser, getScopedBranchId } from '../../
 
 @Injectable()
 export class DebitNotesService {
+  private pdfFonts = {
+    regular: 'Helvetica',
+    bold: 'Helvetica-Bold',
+    italic: 'Helvetica-Oblique',
+  };
+
   constructor(
     @InjectRepository(DebitNote) private noteRepo: Repository<DebitNote>,
     @InjectRepository(DebitNoteLine) private lineRepo: Repository<DebitNoteLine>,
@@ -38,20 +44,34 @@ export class DebitNotesService {
     }
   }
 
+  private isAdmin(user?: AuthenticatedUser) {
+    return (user?.roles || []).some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+  }
+
   // ─── CRUD ────────────────────────────────────────────────────────────────
 
   async create(dto: CreateDebitNoteDto, actor: AuthenticatedUser) {
     const saved = await this.dataSource.transaction(async (em) => {
-      const job = await this.assertJob(dto.jobId);
-      this.enforceBranchAccess(actor, job.branchId);
+      const jobs = await this.resolveDebitNoteJobs(dto);
+      const primaryJob = jobs[0];
+      jobs.forEach((job) => this.enforceBranchAccess(actor, job.branchId));
       await this.validateLineItemsAgainstPricing(em, dto.lineItems || []);
       const totalAmount = this.calculateLineTotal(dto.lineItems, dto.amount);
       const note = await em.save(DebitNote, em.create(DebitNote, {
-        partnerId: job.partnerId,
-        jobId: job.id,
+        partnerId: primaryJob.partnerId,
+        jobId: primaryJob.id,
         currency: dto.currency || 'VND',
         docDate: dto.docDate ? new Date(dto.docDate) : null,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+        referenceNo: dto.referenceNo || null,
+        groupCode: dto.groupCode || null,
+        paymentTerm: dto.paymentTerm || null,
+        movingType: dto.movingType || null,
+        direction: dto.direction || null,
+        mblNo: dto.mblNo || null,
+        exportNote: dto.exportNote || null,
+        bankName: dto.bankName || null,
+        bankAccountNo: dto.bankAccountNo || null,
         description: dto.description,
         paymentMethod: dto.paymentMethod || null,
         paymentAccountRef: dto.paymentAccountRef || null,
@@ -65,7 +85,7 @@ export class DebitNotesService {
         updatedBy: actor.id,
       }));
 
-      await this.saveLineItems(em, note.id, dto.lineItems || [], note.currency);
+      await this.saveLineItems(em, note.id, dto.lineItems || [], note.currency, primaryJob.id);
       return this.syncReceivable(em, note, actor.id);
     });
 
@@ -95,28 +115,42 @@ export class DebitNotesService {
     if (!note) throw new NotFoundException('Debit note not found');
     await this.enforceNoteBranchAccess(note, actor);
     const lines = await this.lineRepo.find({ where: { debitNoteId: id }, order: { id: 'ASC' } });
-    return { ...note, lineItems: lines };
+    const jobIds = this.collectDebitNoteJobIds(note, lines);
+    return { ...note, jobIds, lineItems: lines };
   }
 
   async update(id: number, dto: UpdateDebitNoteDto, actor: AuthenticatedUser) {
     const note = await this.findOneOrFail(id);
     await this.enforceNoteBranchAccess(note, actor);
+    if (note.lockedAt && !this.isAdmin(actor)) {
+      throw new ForbiddenException('Only admin can edit a locked debit note');
+    }
     if (![DebitNoteStatus.DRAFT, DebitNoteStatus.POSTED].includes(note.status) || note.paymentStatus !== PaymentStatus.UNPAID) {
       throw new BadRequestException('Only unpaid draft/posted debit notes can be edited');
     }
 
     return this.dataSource.transaction(async (em) => {
-      const job = dto.jobId ? await this.assertJob(dto.jobId) : await this.assertJob(note.jobId);
-      this.enforceBranchAccess(actor, job.branchId);
+      const jobs = await this.resolveDebitNoteJobs(dto, note.jobId);
+      const primaryJob = jobs[0];
+      jobs.forEach((job) => this.enforceBranchAccess(actor, job.branchId));
       if (dto.lineItems) {
         await this.validateLineItemsAgainstPricing(em, dto.lineItems);
       }
       Object.assign(note, {
-        partnerId: job.partnerId,
-        jobId: job.id,
+        partnerId: primaryJob.partnerId,
+        jobId: primaryJob.id,
         currency: dto.currency ?? note.currency,
         docDate: dto.docDate ? new Date(dto.docDate) : note.docDate,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : note.dueDate,
+        referenceNo: dto.referenceNo ?? note.referenceNo,
+        groupCode: dto.groupCode ?? note.groupCode,
+        paymentTerm: dto.paymentTerm ?? note.paymentTerm,
+        movingType: dto.movingType ?? note.movingType,
+        direction: dto.direction ?? note.direction,
+        mblNo: dto.mblNo ?? note.mblNo,
+        exportNote: dto.exportNote ?? note.exportNote,
+        bankName: dto.bankName ?? note.bankName,
+        bankAccountNo: dto.bankAccountNo ?? note.bankAccountNo,
         description: dto.description ?? note.description,
         paymentMethod: dto.paymentMethod ?? note.paymentMethod,
         paymentAccountRef: dto.paymentAccountRef ?? note.paymentAccountRef,
@@ -127,7 +161,7 @@ export class DebitNotesService {
       const saved = await em.save(DebitNote, note);
       if (dto.lineItems) {
         await em.delete(DebitNoteLine, { debitNoteId: id });
-        await this.saveLineItems(em, id, dto.lineItems, saved.currency);
+        await this.saveLineItems(em, id, dto.lineItems, saved.currency, primaryJob.id);
       }
       return this.syncReceivable(em, saved, actor.id);
     });
@@ -136,6 +170,9 @@ export class DebitNotesService {
   async delete(id: number, actor: AuthenticatedUser) {
     const note = await this.findOneOrFail(id);
     await this.enforceNoteBranchAccess(note, actor);
+    if (note.lockedAt) {
+      throw new BadRequestException('Locked debit notes cannot be deleted');
+    }
     if (note.status !== DebitNoteStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT debit notes can be deleted');
     }
@@ -225,6 +262,9 @@ export class DebitNotesService {
         paidAmount,
         paidAt,
         paidBy: actor.id,
+        lockedAt: paymentStatus === PaymentStatus.PAID ? note.lockedAt || new Date() : note.lockedAt,
+        lockedBy: paymentStatus === PaymentStatus.PAID ? note.lockedBy || actor.id : note.lockedBy,
+        lockReason: paymentStatus === PaymentStatus.PAID ? note.lockReason || 'Locked after receipt/payment was recorded' : note.lockReason,
         updatedBy: actor.id,
       });
 
@@ -235,6 +275,13 @@ export class DebitNotesService {
           paymentAccountRef: dto.paymentAccountRef || null,
           updatedBy: actor.id,
         });
+      }
+      if (paymentStatus === PaymentStatus.PAID) {
+        const lines = await em.find(DebitNoteLine, { where: { debitNoteId: note.id } });
+        const jobIds = this.collectDebitNoteJobIds(note, lines);
+        if (jobIds.length) {
+          await em.update(Job, { id: In(jobIds) }, { status: JobStatus.CLOSED, closedAt: new Date(), closedBy: actor.id, updatedBy: actor.id });
+        }
       }
       return updated;
     });
@@ -253,6 +300,7 @@ export class DebitNotesService {
 
   async exportExcel(id: number, actor?: AuthenticatedUser) {
     const context = await this.buildExportContext(id, actor);
+    const jobCodes = this.formatJobCodes(context.jobs);
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Debit Note');
 
@@ -275,13 +323,18 @@ export class DebitNotesService {
       ['Customer', context.partner?.name || '-'],
       ['Tax Code', context.partner?.taxCode || '-'],
       ['Address', context.partner?.address || '-'],
-      ['Job No.', context.job?.jobCode || '-'],
+      ['Job No.', jobCodes],
       ['Branch', context.branch?.name || '-'],
+      ['Reference No.', context.note.referenceNo || `Invoice${this.formatDebitRef(context.note.id)}`],
       ['Document Date', this.formatDate(context.note.docDate)],
       ['Due Date', this.formatDate(context.note.dueDate)],
+      ['Payment Term', context.note.paymentTerm || this.resolvePaymentTerm(context.note)],
+      ['Moving Type', context.note.movingType || this.resolveMovingType(context.job)],
+      ['Direction', context.note.direction || this.resolveDirection(context.job)],
+      ['MBL No.', context.note.mblNo || context.job?.mbl || '-'],
       ['Payment Method', context.note.paymentMethod || '-'],
       ['Payment Status', context.note.paymentStatus || '-'],
-      ['Description', context.note.description || '-'],
+      ['Export Note', context.note.exportNote || context.note.description || '-'],
     ];
 
     let rowIndex = 3;
@@ -308,11 +361,12 @@ export class DebitNotesService {
     for (const line of context.lines) {
       rowIndex += 1;
       const row = worksheet.getRow(rowIndex);
+      const lineJob = this.resolveLineJob(context, line);
       row.getCell(3).value = line.serviceType || '-';
-      row.getCell(4).value = line.description || '-';
+      row.getCell(4).value = [lineJob?.jobCode, line.description || '-'].filter(Boolean).join(' - ');
       row.getCell(5).value = Number(line.quantity || 0);
-      row.getCell(6).value = Number(line.unitPrice || 0);
-      row.getCell(7).value = Number(line.amount || 0);
+      row.getCell(6).value = line.chargeNote || `${this.formatMoney(line.unitPrice)} ${line.currency || context.note.currency || 'VND'}/${this.resolveLineUnit(lineJob)}`;
+      row.getCell(7).value = Number(line.amount || 0) - Number(line.creditAmount || 0) + Number(line.vatAmount || 0);
       [3, 4, 5, 6, 7].forEach((column) => {
         row.getCell(column).border = this.excelBorder();
         row.getCell(column).alignment = { wrapText: true };
@@ -336,51 +390,125 @@ export class DebitNotesService {
 
   async exportPdf(id: number, actor?: AuthenticatedUser) {
     const context = await this.buildExportContext(id, actor);
-    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    const doc = new PDFDocument({ margin: 24, size: 'A4' });
     this.registerPdfFont(doc);
 
     const chunks: Buffer[] = [];
     doc.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
     const done = new Promise<Buffer>((resolve) => doc.on('end', () => resolve(Buffer.concat(chunks))));
 
-    doc.fontSize(18).text(`DEBIT NOTE ${context.noteNo}`, { align: 'center' });
-    doc.moveDown();
-    this.pdfInfoLine(doc, 'Customer', context.partner?.name || '-');
-    this.pdfInfoLine(doc, 'Tax Code', context.partner?.taxCode || '-');
-    this.pdfInfoLine(doc, 'Address', context.partner?.address || '-');
-    this.pdfInfoLine(doc, 'Job No.', context.job?.jobCode || '-');
-    this.pdfInfoLine(doc, 'Branch', context.branch?.name || '-');
-    this.pdfInfoLine(doc, 'Document Date', this.formatDate(context.note.docDate));
-    this.pdfInfoLine(doc, 'Due Date', this.formatDate(context.note.dueDate));
-    this.pdfInfoLine(doc, 'Payment Method', context.note.paymentMethod || '-');
-    this.pdfInfoLine(doc, 'Payment Status', context.note.paymentStatus || '-');
-    if (context.note.description) this.pdfInfoLine(doc, 'Description', context.note.description);
+    const left = 24;
+    const right = 571;
+    const blue = '#C8D8EE';
+    const border = '#D0D0D0';
+    const preTax = context.lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+    const totalCredit = context.lines.reduce((sum, line) => sum + Number(line.creditAmount || 0), 0);
+    const totalVat = context.lines.reduce((sum, line) => sum + Number(line.vatAmount || 0), 0);
+    const totalAmount = preTax - totalCredit + totalVat;
+    const noteDate = this.formatLongDate(context.note.docDate || context.note.createdAt);
+    const dueDate = this.formatLongDate(context.note.dueDate);
+    const vessel = [context.job?.vesselName, context.job?.voyageNo].filter(Boolean).join(' / ');
+    const eta = this.formatLongDate(context.job?.eta);
+    const containerText = this.buildContainerText(context.job);
+    const jobCodes = this.formatJobCodes(context.jobs);
 
-    doc.moveDown();
-    let y = doc.y;
-    this.pdfTableRow(doc, y, ['Service', 'Description', 'Qty', 'Unit Price', 'Amount'], true);
-    y += 24;
+    doc.lineWidth(1).rect(1, 1, 593, 840).stroke('#222222');
+
+    this.drawCompanyHeader(doc, context);
+    this.setPdfFont(doc, 'bold');
+    doc.fillColor('#000080').fontSize(18).text('DEBIT NOTE', 450, 50, { width: 105, align: 'right' });
+    this.setPdfFont(doc);
+    doc.fillColor('#111111');
+
+    const topY = 132;
+    doc.fontSize(10).text('Messrs:', 28, topY);
+    this.setPdfFont(doc, 'bold');
+    doc.text(context.partner?.name || '-', 76, topY, { width: 275 });
+    this.setPdfFont(doc);
+    doc.text(context.partner?.address || '-', 76, topY + 14, { width: 300, height: 34 });
+    doc.fontSize(8);
+    this.setPdfFont(doc, 'italic');
+    doc.text('Customer ID: ' + (context.partner?.code || '-'), 76, topY + 50, { width: 220 });
+    this.setPdfFont(doc);
+
+    this.pdfMiniInfo(doc, 404, topY, 'Ref', context.note.referenceNo || `Invoice${this.formatDebitRef(context.note.id)}`);
+    this.pdfMiniInfo(doc, 404, topY + 15, 'Date', noteDate);
+    this.pdfMiniInfo(doc, 404, topY + 30, 'Job', jobCodes);
+
+    const detailY = 203;
+    const detailRows = [
+      ['Vsl./Flight.', vessel || '-'],
+      ['ETA', eta],
+      ['P.O.L', context.job?.pol || context.job?.origin || '-'],
+      ['P.O.D', context.job?.pod || context.job?.destination || '-'],
+      ['MBL No.', context.note.mblNo || context.job?.mbl || '-'],
+      ['Volume', this.formatMeasurement(context.job?.volumeCbm, 'CBM')],
+      ['Weight', this.formatMeasurement(context.job?.weightKg, 'KG')],
+    ];
+    detailRows.forEach((row, index) => {
+      const y = detailY + index * 14;
+      doc.fontSize(10).text(row[0], 28, y, { width: 70 });
+      doc.text(':', 99, y);
+      doc.text(row[1], 109, y, { width: 220 });
+    });
+
+    doc.rect(346, 198, 225, 102).stroke(border);
+    this.setPdfFont(doc, 'bold');
+    doc.fontSize(10).text('Note:', 350, 203);
+    this.setPdfFont(doc);
+    doc.fontSize(10).text(
+      [context.note.exportNote || context.note.description, containerText].filter(Boolean).join('\n') || '-',
+      350,
+      229,
+      { width: 214, height: 64 }
+    );
+
+    const summaryY = 306;
+    this.pdfSummaryRow(doc, summaryY, ['Moving Type', 'Direction', 'Terms', 'Due Date'], blue, true);
+    this.pdfSummaryRow(doc, summaryY + 24, [
+      context.note.movingType || this.resolveMovingType(context.job),
+      context.note.direction || this.resolveDirection(context.job),
+      context.note.paymentTerm || this.resolvePaymentTerm(context.note),
+      dueDate,
+    ], '#FFFFFF', false);
+
+    let y = 360;
+    this.drawDebitHeader(doc, y, blue);
+    y += 23;
+
+    const groupCode = context.note.groupCode || context.job?.declarationNo || context.job?.bookingRef || context.job?.jobCode || context.noteNo;
+    doc.rect(left, y, right - left, 22).stroke(border);
+    this.setPdfFont(doc, 'bold');
+    doc.fontSize(9).text(groupCode, left + 3, y + 6, { width: 190 });
+    this.setPdfFont(doc);
+    y += 22;
 
     for (const line of context.lines) {
-      if (y > 720) {
+      const rowHeight = Math.max(
+        34,
+        this.estimateRowHeight(doc, line.description || '-', 85),
+        this.estimateRowHeight(doc, line.chargeNote || '', 88),
+        this.estimateRowHeight(doc, line.lineNote || '', 62),
+      );
+      if (y + rowHeight + 96 > 805) {
         doc.addPage();
-        y = 40;
-        this.pdfTableRow(doc, y, ['Service', 'Description', 'Qty', 'Unit Price', 'Amount'], true);
-        y += 24;
+        doc.rect(1, 1, 593, 840).stroke('#222222');
+        y = 32;
+        this.drawDebitHeader(doc, y, blue);
+        y += 23;
       }
-      this.pdfTableRow(doc, y, [
-        line.serviceType || '-',
-        line.description || '-',
-        String(line.quantity || 0),
-        this.formatMoney(line.unitPrice),
-        this.formatMoney(line.amount),
-      ]);
-      y += 24;
+      this.drawDebitLine(doc, y, rowHeight, line, context);
+      y += rowHeight;
     }
 
-    doc.moveTo(390, y + 10).lineTo(555, y + 10).stroke();
-    doc.fontSize(11).text('Total', 390, y + 18, { width: 80, align: 'right' });
-    doc.fontSize(11).text(`${this.formatMoney(context.note.amount)} ${context.note.currency || 'VND'}`, 470, y + 18, { width: 85, align: 'right' });
+    this.drawTotalRow(doc, y, 'Pre-tax Total:', preTax, preTax - totalCredit, false);
+    y += 32;
+    this.drawPaymentAndTaxBlock(doc, y, context, totalAmount);
+    y += 64;
+
+    this.setPdfFont(doc);
+    doc.fontSize(10).text('Say :', 27, y + 8, { width: 36 });
+    doc.text(`${this.amountToEnglishWords(totalAmount)} ${context.note.currency || 'VND'}`, 67, y + 8, { width: 490 });
     doc.end();
 
     return { fileName: `${context.noteNo}.pdf`, buffer: await done };
@@ -409,10 +537,16 @@ export class DebitNotesService {
   }
 
   private async enforceNoteBranchAccess(note: DebitNote, actor?: AuthenticatedUser) {
-    if (!note.jobId) return;
-    const job = await this.jobRepo.findOne({ where: { id: note.jobId } });
-    if (!job || job.archivedAt) throw new BadRequestException(`Job #${note.jobId} not found`);
-    this.enforceBranchAccess(actor, job.branchId);
+    const lines = await this.lineRepo.find({ where: { debitNoteId: note.id } });
+    const jobIds = this.collectDebitNoteJobIds(note, lines);
+    if (!jobIds.length) return;
+
+    const jobs = await this.jobRepo.find({ where: { id: In(jobIds) } });
+    if (jobs.length !== jobIds.length) throw new BadRequestException('One or more jobs were not found');
+    jobs.forEach((job) => {
+      if (job.archivedAt) throw new BadRequestException(`Job #${job.id} not found`);
+      this.enforceBranchAccess(actor, job.branchId);
+    });
   }
 
   private async assertJob(jobId?: number): Promise<Job> {
@@ -423,11 +557,40 @@ export class DebitNotesService {
     return job;
   }
 
+  private async resolveDebitNoteJobs(dto: Pick<CreateDebitNoteDto, 'jobId' | 'jobIds' | 'lineItems'>, fallbackJobId?: number): Promise<Job[]> {
+    const ids = [
+      ...(dto.jobIds || []),
+      dto.jobId,
+      ...(dto.lineItems || []).map((line) => line.jobId),
+      fallbackJobId,
+    ].filter((value): value is number => Number.isFinite(Number(value)))
+      .map((value) => Number(value));
+
+    const uniqueIds = [...new Set(ids)];
+    if (!uniqueIds.length) throw new BadRequestException('At least one job is required to create a Debit Note');
+
+    const jobs = await this.jobRepo.find({ where: { id: In(uniqueIds) } });
+    if (jobs.length !== uniqueIds.length) throw new BadRequestException('One or more jobs were not found');
+    const archived = jobs.find((job) => job.archivedAt);
+    if (archived) throw new BadRequestException(`Job #${archived.id} not found`);
+
+    const partnerIds = [...new Set(jobs.map((job) => job.partnerId).filter(Boolean))];
+    if (partnerIds.length !== 1) throw new BadRequestException('All jobs in a Debit Note must belong to the same customer');
+
+    return uniqueIds.map((jobId) => jobs.find((job) => job.id === jobId)!);
+  }
+
+  private collectDebitNoteJobIds(note: DebitNote, lines: DebitNoteLine[]) {
+    return [...new Set([note.jobId, ...lines.map((line) => line.jobId)].filter(Boolean))];
+  }
+
   private calculateLineTotal(lineItems: CreateDebitNoteDto['lineItems'], fallbackAmount?: number) {
     if (!lineItems?.length) return Number(fallbackAmount || 0);
     return lineItems.reduce((sum, item) => {
       const lineAmount = Number(item.amount || 0) || Number(item.quantity || 1) * Number(item.unitPrice || 0);
-      return sum + lineAmount;
+      const vatAmount = Number(item.vatAmount || 0) || lineAmount * (Number(item.vatRate || 0) / 100);
+      const creditAmount = Number(item.creditAmount || 0);
+      return sum + lineAmount - creditAmount + vatAmount;
     }, 0);
   }
 
@@ -462,17 +625,26 @@ export class DebitNotesService {
     });
   }
 
-  private async saveLineItems(em: EntityManager, debitNoteId: number, lineItems: CreateDebitNoteDto['lineItems'], currency: string) {
+  private async saveLineItems(em: EntityManager, debitNoteId: number, lineItems: CreateDebitNoteDto['lineItems'], currency: string, fallbackJobId: number) {
     if (!lineItems?.length) return;
     const lines = lineItems.map((item) => {
       const lineAmount = Number(item.amount || 0) || Number(item.quantity || 1) * Number(item.unitPrice || 0);
+      const creditAmount = Number(item.creditAmount || 0);
+      const vatRate = Number(item.vatRate || 0);
+      const vatAmount = Number(item.vatAmount || 0) || lineAmount * (vatRate / 100);
       return em.create(DebitNoteLine, {
         debitNoteId,
+        jobId: item.jobId || fallbackJobId,
         serviceType: item.serviceType,
         description: item.description,
+        chargeNote: item.chargeNote,
+        lineNote: item.lineNote,
         quantity: item.quantity || 1,
         unitPrice: item.unitPrice || 0,
         amount: lineAmount,
+        creditAmount,
+        vatRate,
+        vatAmount,
         currency: item.currency || currency || 'VND',
         pricingId: item.pricingId,
       });
@@ -517,13 +689,16 @@ export class DebitNotesService {
   private async buildExportContext(id: number, actor?: AuthenticatedUser) {
     const note = await this.findOneOrFail(id);
     await this.enforceNoteBranchAccess(note, actor);
-    const [lines, job, partner] = await Promise.all([
+    const [lines, partner] = await Promise.all([
       this.lineRepo.find({ where: { debitNoteId: id }, order: { id: 'ASC' } }),
-      this.jobRepo.findOne({ where: { id: note.jobId } }),
       this.partnerRepo.findOne({ where: { id: note.partnerId } }),
     ]);
+    const jobIds = this.collectDebitNoteJobIds(note, lines);
+    const jobs = jobIds.length ? await this.jobRepo.find({ where: { id: In(jobIds) } }) : [];
+    const jobMap = new Map(jobs.map((job) => [job.id, job]));
+    const job = (note.jobId ? jobMap.get(note.jobId) : null) || jobs[0] || null;
     const branch = job?.branchId ? await this.branchRepo.findOne({ where: { id: job.branchId } }) : null;
-    return { note, lines, job, partner, branch, noteNo: `DN-${note.id}` };
+    return { note, lines, job, jobs: jobIds.map((jobId) => jobMap.get(jobId)).filter(Boolean), jobMap, partner, branch, noteNo: `DN-${note.id}` };
   }
 
   private excelBorder() {
@@ -546,38 +721,237 @@ export class DebitNotesService {
     return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Number(value || 0));
   }
 
+  private formatDebitRef(id: number) {
+    const now = new Date();
+    return `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}/${id}`;
+  }
+
+  private formatLongDate(value?: Date | string | null) {
+    if (!value) return '-';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return new Intl.DateTimeFormat('en-US', { month: 'long', day: '2-digit', year: 'numeric' }).format(date);
+  }
+
+  private formatMeasurement(value?: number | string | null, unit = '') {
+    if (value === null || value === undefined || value === '') return '-';
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount === 0) return '-';
+    return `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 3 }).format(amount)} ${unit}`.trim();
+  }
+
   private registerPdfFont(doc: any) {
-    const fontPath = 'C:/Windows/Fonts/arial.ttf';
-    if (existsSync(fontPath)) {
-      doc.registerFont('AppRegular', fontPath);
-      doc.font('AppRegular');
-    }
+    const candidates = {
+      regular: ['C:/Windows/Fonts/arial.ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'],
+      bold: ['C:/Windows/Fonts/arialbd.ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'],
+      italic: ['C:/Windows/Fonts/ariali.ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf'],
+    };
+
+    (Object.keys(candidates) as Array<keyof typeof candidates>).forEach((style) => {
+      const path = candidates[style].find((item) => existsSync(item));
+      if (path) {
+        const name = `App${style}`;
+        doc.registerFont(name, path);
+        this.pdfFonts[style] = name;
+      }
+    });
+
+    this.setPdfFont(doc);
   }
 
-  private pdfInfoLine(doc: any, label: string, value: string) {
-    doc.fontSize(10).text(`${label}: `, { continued: true });
-    doc.text(value || '-');
+  private setPdfFont(doc: any, style: keyof typeof this.pdfFonts = 'regular') {
+    doc.font(this.pdfFonts[style] || this.pdfFonts.regular);
   }
 
-  private pdfTableRow(doc: any, y: number, values: string[], header = false) {
+  private drawCompanyHeader(doc: any, context: Awaited<ReturnType<typeof this.buildExportContext>>) {
+    doc.fillColor('#C82D32').fontSize(15).text('DuongMinh', 24, 32, { width: 96 });
+    doc.text('Logistics', 24, 50, { width: 96 });
+    doc.strokeColor('#C79B3A').lineWidth(2).moveTo(24, 84).lineTo(103, 84).stroke();
+    doc.lineWidth(5).moveTo(92, 75).lineTo(122, 61).lineTo(135, 65).stroke('#C79B3A');
+
+    this.setPdfFont(doc, 'bold');
+    doc.fillColor('#111111').fontSize(12).text('Cong ty Co Phan Giao Nhan Van Tai Quoc Te Duong', 122, 38, { width: 330 });
+    doc.text('Minh', 122, 53, { width: 280 });
+    this.setPdfFont(doc);
+    doc.fontSize(9).text(context.branch?.address || '59 Tran Dinh Xu, Phuong Cau kho, Quan 1, Tp Ho chi Minh, VIETNAM', 122, 70, { width: 350 });
+    doc.text('Tel :84-2838371177    Fax : 84-2838371199', 122, 83, { width: 330 });
+    doc.text('Email : Info@duongminhvn.com', 122, 96, { width: 260 });
+  }
+
+  private pdfMiniInfo(doc: any, x: number, y: number, label: string, value: string) {
+    doc.fillColor('#111111').fontSize(10).text(label, x, y, { width: 35 });
+    doc.text(':', x + 36, y, { width: 8 });
+    doc.text(value || '-', x + 49, y, { width: 126 });
+  }
+
+  private formatJobCodes(jobs: Job[]) {
+    return jobs.map((job) => job.jobCode).filter(Boolean).join(', ') || '-';
+  }
+
+  private resolveLineJob(context: Awaited<ReturnType<typeof this.buildExportContext>>, line: DebitNoteLine) {
+    return (line.jobId ? context.jobMap.get(line.jobId) : null) || context.job;
+  }
+
+  private pdfSummaryRow(doc: any, y: number, values: string[], fill: string, header: boolean) {
     const columns = [
-      { x: 40, width: 80, align: 'left' },
-      { x: 120, width: 210, align: 'left' },
-      { x: 330, width: 45, align: 'right' },
-      { x: 375, width: 90, align: 'right' },
-      { x: 465, width: 90, align: 'right' },
+      { x: 24, width: 132 },
+      { x: 156, width: 143 },
+      { x: 299, width: 136 },
+      { x: 435, width: 136 },
     ];
-
-    doc.fontSize(header ? 10 : 9);
     columns.forEach((column, index) => {
-      if (header) doc.rect(column.x, y, column.width, 24).fillAndStroke('#EAF2FF', '#D9D9D9');
-      else doc.rect(column.x, y, column.width, 24).stroke('#D9D9D9');
-      doc.fillColor('#111111').text(values[index] || '-', column.x + 4, y + 7, {
-        width: column.width - 8,
-        align: column.align,
-        lineBreak: false,
+      doc.rect(column.x, y, column.width, 24).fillAndStroke(fill, '#D0D0D0');
+      doc.fillColor('#111111').fontSize(10);
+      this.setPdfFont(doc, header ? 'bold' : 'regular');
+      doc.text(values[index] || '-', column.x + 4, y + 7, { width: column.width - 8, align: 'center' });
+    });
+    this.setPdfFont(doc);
+  }
+
+  private drawDebitHeader(doc: any, y: number, fill: string) {
+    const columns = this.debitPdfColumns();
+    const titles = ['Description', 'Charge Note', "Q'ty", 'Note', 'Debit', 'Credit', 'VAT', 'Amount'];
+    columns.forEach((column, index) => {
+      doc.rect(column.x, y, column.width, 23).fillAndStroke(fill, '#D0D0D0');
+      this.setPdfFont(doc, 'bold');
+      doc.fillColor('#111111').fontSize(9).text(titles[index], column.x + 3, y + 7, {
+        width: column.width - 6,
+        align: 'center',
       });
     });
+    this.setPdfFont(doc);
+  }
+
+  private drawDebitLine(doc: any, y: number, height: number, line: DebitNoteLine, context: Awaited<ReturnType<typeof this.buildExportContext>>) {
+    const columns = this.debitPdfColumns();
+    const lineJob = this.resolveLineJob(context, line);
+    const quantity = Number(line.quantity || 0);
+    const unitPrice = Number(line.unitPrice || 0);
+    const amount = Number(line.amount || 0);
+    const creditAmount = Number(line.creditAmount || 0);
+    const vatAmount = Number(line.vatAmount || 0);
+    const values = [
+      [lineJob?.jobCode, line.description || line.serviceType || '-'].filter(Boolean).join(' - '),
+      line.chargeNote || `${this.formatMoney(unitPrice)} ${line.currency || context.note.currency || 'VND'}/${this.resolveLineUnit(lineJob)}`,
+      quantity ? `${this.formatMoney(quantity)} x ${this.resolveLineUnit(lineJob)}` : '-',
+      line.lineNote || '',
+      this.formatMoney(amount),
+      creditAmount ? this.formatMoney(creditAmount) : '',
+      this.formatMoney(vatAmount),
+      this.formatMoney(amount - creditAmount + vatAmount),
+    ];
+    columns.forEach((column, index) => {
+      doc.rect(column.x, y, column.width, height).stroke('#D0D0D0');
+      doc.fillColor('#111111').fontSize(9).text(values[index], column.x + 3, y + 6, {
+        width: column.width - 6,
+        height: height - 8,
+        align: index >= 4 ? 'right' : index === 2 || index === 3 ? 'center' : 'left',
+      });
+    });
+  }
+
+  private drawTotalRow(doc: any, y: number, label: string, debit: number, amount: number, bold: boolean) {
+    const columns = this.debitPdfColumns();
+    columns.forEach((column) => doc.rect(column.x, y, column.width, 32).stroke('#D0D0D0'));
+    this.setPdfFont(doc, bold ? 'bold' : 'regular');
+    doc.fillColor('#111111').fontSize(9).text(label, columns[0].x + 3, y + 10, {
+      width: columns[0].width + columns[1].width + columns[2].width - 6,
+      align: 'right',
+    });
+    doc.text(this.formatMoney(debit), columns[4].x + 3, y + 10, { width: columns[4].width - 6, align: 'right' });
+    doc.text(this.formatMoney(amount), columns[7].x + 3, y + 10, { width: columns[7].width - 6, align: 'right' });
+    this.setPdfFont(doc);
+  }
+
+  private drawPaymentAndTaxBlock(doc: any, y: number, context: Awaited<ReturnType<typeof this.buildExportContext>>, totalAmount: number) {
+    doc.rect(24, y, 249, 64).stroke('#D0D0D0');
+    doc.fontSize(9).fillColor('#111111').text('Please make payment to:', 27, y + 6);
+    doc.text('Bank Name', 27, y + 20);
+    doc.text('Account No.', 27, y + 34);
+    doc.text(context.note.bankName || '-', 86, y + 20, { width: 180 });
+    doc.text(context.note.bankAccountNo || context.note.paymentAccountRef || '-', 86, y + 34, { width: 180 });
+
+    doc.rect(273, y, 298, 32).stroke('#D0D0D0');
+    doc.rect(273, y + 32, 298, 32).stroke('#D0D0D0');
+    const totalVat = context.lines.reduce((sum, line) => sum + Number(line.vatAmount || 0), 0);
+    doc.text('Tax:', 305, y + 10, { width: 60, align: 'right' });
+    doc.text(this.formatMoney(totalVat), 514, y + 10, { width: 52, align: 'right' });
+    this.setPdfFont(doc, 'bold');
+    doc.text('Total:', 305, y + 42, { width: 60, align: 'right' });
+    doc.text(this.formatMoney(totalAmount), 514, y + 42, { width: 52, align: 'right' });
+    this.setPdfFont(doc);
+  }
+
+  private debitPdfColumns() {
+    return [
+      { x: 24, width: 92 },
+      { x: 116, width: 93 },
+      { x: 209, width: 68 },
+      { x: 277, width: 68 },
+      { x: 345, width: 64 },
+      { x: 409, width: 58 },
+      { x: 467, width: 50 },
+      { x: 517, width: 54 },
+    ];
+  }
+
+  private estimateRowHeight(doc: any, text: string, width: number) {
+    this.setPdfFont(doc);
+    doc.fontSize(9);
+    return Math.ceil(doc.heightOfString(text || '-', { width, align: 'left' })) + 14;
+  }
+
+  private resolveMovingType(job?: Job | null) {
+    const value = job?.shipmentMode || job?.jobType || '';
+    if (String(value).includes('ROAD')) return 'Ground';
+    if (String(value).includes('AIR')) return 'Air';
+    if (String(value).includes('SEA')) return 'Sea';
+    return job?.shipmentMode || 'Ground';
+  }
+
+  private resolveDirection(job?: Job | null) {
+    if (job?.jobType === 'IMPORT') return 'Import';
+    if (job?.jobType === 'EXPORT') return 'Export';
+    if (job?.jobType === 'DOMESTIC') return 'Logistics';
+    return 'Logistics';
+  }
+
+  private resolvePaymentTerm(note: DebitNote) {
+    return note.paymentMethod === 'CASH' ? 'Cash' : 'At sight';
+  }
+
+  private resolveLineUnit(job?: Job | null) {
+    const unit = String(job?.cargoUnit || '').toLowerCase();
+    if (unit.includes('container') || unit.includes('cont')) return '40';
+    if (unit.includes('kg')) return 'KG';
+    if (unit.includes('cbm')) return 'CBM';
+    if (unit.includes('ton')) return 'TON';
+    return 'LOT';
+  }
+
+  private buildContainerText(job?: Job | null) {
+    const parts = [
+      job?.containerNo,
+      [job?.sealNo ? `SEAL ${job.sealNo}` : '', job?.cargoType].filter(Boolean).join(' - '),
+      [job?.origin || job?.pol, job?.destination || job?.pod].filter(Boolean).join(' - '),
+    ].filter(Boolean);
+    return parts.join('\n');
+  }
+
+  private amountToEnglishWords(value: number) {
+    const amount = Math.round(Number(value || 0));
+    if (amount === 0) return 'ZERO';
+    const belowTwenty = ['', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'TEN', 'ELEVEN', 'TWELVE', 'THIRTEEN', 'FOURTEEN', 'FIFTEEN', 'SIXTEEN', 'SEVENTEEN', 'EIGHTEEN', 'NINETEEN'];
+    const tens = ['', '', 'TWENTY', 'THIRTY', 'FORTY', 'FIFTY', 'SIXTY', 'SEVENTY', 'EIGHTY', 'NINETY'];
+    const convert = (num: number): string => {
+      if (num < 20) return belowTwenty[num];
+      if (num < 100) return [tens[Math.floor(num / 10)], belowTwenty[num % 10]].filter(Boolean).join(' ');
+      if (num < 1000) return [belowTwenty[Math.floor(num / 100)], 'HUNDRED', convert(num % 100)].filter(Boolean).join(' ');
+      if (num < 1000000) return [convert(Math.floor(num / 1000)), 'THOUSAND', convert(num % 1000)].filter(Boolean).join(' ');
+      if (num < 1000000000) return [convert(Math.floor(num / 1000000)), 'MILLION', convert(num % 1000000)].filter(Boolean).join(' ');
+      return [convert(Math.floor(num / 1000000000)), 'BILLION', convert(num % 1000000000)].filter(Boolean).join(' ');
+    };
+    return convert(amount).replace(/\s+/g, ' ').trim();
   }
 
   private normalizeText(value?: string): string {

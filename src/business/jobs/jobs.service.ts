@@ -8,6 +8,8 @@ import { Branch } from '../../models/branch.entity';
 import { User } from '../../models/user.entity';
 import { RevenueEntry, AccountingStatus, PaymentStatus } from '../../models/revenue-entry.entity';
 import { CostEntry } from '../../models/cost-entry.entity';
+import { DebitNote } from '../../models/debit-note.entity';
+import { DebitNoteLine } from '../../models/debit-note-line.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { CreateJobDto, UpdateJobDto, JobFilterDto, CreateMilestoneDto, UpdateMilestoneDto, JobDebtPreviewDto } from './dto/job.dto';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
@@ -24,6 +26,8 @@ export class JobsService {
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(RevenueEntry) private revenueRepo: Repository<RevenueEntry>,
     @InjectRepository(CostEntry) private costRepo: Repository<CostEntry>,
+    @InjectRepository(DebitNote) private debitNoteRepo: Repository<DebitNote>,
+    @InjectRepository(DebitNoteLine) private debitNoteLineRepo: Repository<DebitNoteLine>,
     private auditLogs: AuditLogsService,
     private customerDebtService: CustomerDebtService,
   ) {}
@@ -59,6 +63,86 @@ export class JobsService {
         throw new BadRequestException('Assigned user does not belong to the job branch');
       }
     }
+  }
+
+  private isAdmin(user?: AuthenticatedUser) {
+    return (user?.roles || []).some((role) => ['SUPER_ADMIN', 'ADMIN'].includes(role));
+  }
+
+  private hasValueChanged(current: unknown, next: unknown) {
+    if (next === undefined) return false;
+    if (current === null || current === undefined || current === '') return !(next === null || next === undefined || next === '');
+    if (typeof current === 'number' || typeof next === 'number') {
+      return Number(current) !== Number(next);
+    }
+    return String(current) !== String(next);
+  }
+
+  private async ensureRestrictedFieldsCanChange(job: Job & {
+    revenueEntries?: RevenueEntry[];
+    costEntries?: CostEntry[];
+    debitNoteSummary?: { count?: number };
+  }, dto: UpdateJobDto) {
+    const hasFinancialDocuments =
+      Number(job.debitNoteSummary?.count || 0) > 0 ||
+      Number(job.debtAmount || 0) > 0 ||
+      Boolean(job.revenueEntries?.length) ||
+      Boolean(job.costEntries?.length);
+
+    if (!hasFinancialDocuments) return;
+
+    const restrictedFields: Array<keyof UpdateJobDto> = [
+      'partnerId',
+      'debtAmount',
+      'cargoUnit',
+      'cargoQuantity',
+      'weightKg',
+      'volumeCbm',
+      'origin',
+      'destination',
+      'pol',
+      'pod',
+      'shipmentMode',
+    ];
+
+    const changedFields = restrictedFields.filter((field) => this.hasValueChanged((job as any)[field], dto[field]));
+    if (changedFields.length) {
+      throw new BadRequestException(`Cannot edit financial fields after this job has debit notes, debt, or accounting documents: ${changedFields.join(', ')}`);
+    }
+  }
+
+  private async getJobDocumentSummary(jobId: number) {
+    const [revenueCount, costCount, debitNoteCount, debitNoteLineCount] = await Promise.all([
+      this.revenueRepo.count({ where: { jobId } }),
+      this.costRepo.count({ where: { jobId } }),
+      this.debitNoteRepo.count({ where: { jobId } }),
+      this.debitNoteLineRepo.count({ where: { jobId } }),
+    ]);
+
+    return {
+      revenueCount,
+      costCount,
+      debitNoteCount: debitNoteCount + debitNoteLineCount,
+      hasAccountingDocuments: revenueCount + costCount > 0,
+      hasDebitNotes: debitNoteCount + debitNoteLineCount > 0,
+    };
+  }
+
+  private async lockDebitNotesForJob(jobId: number, actorId: number, reason: string) {
+    const headerNotes = await this.debitNoteRepo.find({ where: { jobId } });
+    const lines = await this.debitNoteLineRepo.find({ where: { jobId } });
+    const lineNoteIds = [...new Set(lines.map((line) => line.debitNoteId).filter(Boolean))];
+    const lineNotes = lineNoteIds.length ? await this.debitNoteRepo.findByIds(lineNoteIds) : [];
+    const notes = [...headerNotes, ...lineNotes];
+    const uniqueNotes = [...new Map(notes.map((note) => [note.id, note])).values()];
+    const now = new Date();
+
+    await Promise.all(uniqueNotes.map((note) => this.debitNoteRepo.update(note.id, {
+      lockedAt: note.lockedAt || now,
+      lockedBy: note.lockedBy || actorId,
+      lockReason: note.lockReason || reason,
+      updatedBy: actorId,
+    })));
   }
 
   async create(dto: CreateJobDto, actorId: number, actor?: AuthenticatedUser) {
@@ -182,9 +266,11 @@ export class JobsService {
     const job = await this.repo.findOne({ where: { id } });
     if (!job || job.archivedAt) throw new NotFoundException('Job not found');
     this.enforceBranchAccess(actor, job.branchId);
-    const [revenueEntries, costEntries] = await Promise.all([
+    const [revenueEntries, costEntries, debitNoteCount, debitNoteLineCount] = await Promise.all([
       this.revenueRepo.find({ where: { jobId: id }, order: { createdAt: 'ASC' } }),
       this.costRepo.find({ where: { jobId: id }, order: { createdAt: 'ASC' } }),
+      this.debitNoteRepo.count({ where: { jobId: id } }),
+      this.debitNoteLineRepo.count({ where: { jobId: id } }),
     ]);
 
     const postedRevenue = revenueEntries.filter((entry) => entry.status === AccountingStatus.POSTED);
@@ -218,6 +304,9 @@ export class JobsService {
         revenueTotal,
         unpaidRevenueTotal,
       },
+      debitNoteSummary: {
+        count: debitNoteCount + debitNoteLineCount,
+      },
     };
   }
 
@@ -226,6 +315,29 @@ export class JobsService {
     if (job.status === JobStatus.CLOSED || job.status === JobStatus.CANCELLED) {
       throw new BadRequestException('Cannot edit a CLOSED or CANCELLED job');
     }
+    const documentSummary = await this.getJobDocumentSummary(id);
+    const admin = this.isAdmin(actor);
+
+    if (documentSummary.hasAccountingDocuments) {
+      throw new BadRequestException('This job already has receipt/payment documents and cannot be edited');
+    }
+
+    const willBeConfirmed = job.status === JobStatus.IN_PROGRESS || dto.status === JobStatus.IN_PROGRESS;
+
+    if (job.status === JobStatus.IN_PROGRESS && !admin) {
+      throw new ForbiddenException('Only admin can edit a confirmed job');
+    }
+
+    if (willBeConfirmed && documentSummary.hasDebitNotes) {
+      if (!admin) {
+        throw new ForbiddenException('Only admin can edit a confirmed job that already has debit notes');
+      }
+      if (!dto.confirmDebitNoteLock) {
+        throw new BadRequestException('Editing this confirmed job will lock existing debit notes. Please confirm before saving');
+      }
+      await this.lockDebitNotesForJob(id, actorId, 'Locked because the confirmed job was edited after debit note creation');
+    }
+
     this.enforceBranchAccess(actor, dto.branchId ?? job.branchId);
     await this.validateRefs(dto);
     await this.ensureDebtLimit({
@@ -235,7 +347,8 @@ export class JobsService {
       createdAt: job.createdAt,
     });
     const oldValues = { jobCode: job.jobCode, partnerId: job.partnerId, branchId: job.branchId, status: job.status };
-    const updated = await this.repo.save({ ...job, ...dto, updatedBy: actorId });
+    const { confirmDebitNoteLock, ...updateValues } = dto;
+    const updated = await this.repo.save({ ...job, ...updateValues, updatedBy: actorId });
     await this.refreshActualDebtForPartners([job.partnerId, updated.partnerId]);
     this.auditLogs.logAsync({
       entityName: 'Job',
@@ -250,6 +363,10 @@ export class JobsService {
 
   async archive(id: number, actorId: number, actor?: AuthenticatedUser) {
     const job = await this.findOne(id, actor);
+    const documentSummary = await this.getJobDocumentSummary(id);
+    if (documentSummary.hasDebitNotes || documentSummary.hasAccountingDocuments || Number(job.debtAmount || 0) > 0) {
+      throw new BadRequestException('Cannot delete/archive a job that already has debit notes, debt, or accounting documents');
+    }
     const updated = await this.repo.save({ ...job, archivedAt: new Date(), archivedBy: actorId, updatedBy: actorId });
     await this.customerDebtService.refreshPartnerActualDebt(job.partnerId);
     this.auditLogs.logAsync({
@@ -267,6 +384,9 @@ export class JobsService {
     const job = await this.findOne(id, actor);
     if (job.status === JobStatus.CLOSED || job.status === JobStatus.CANCELLED) {
       throw new BadRequestException('Job is already finalized');
+    }
+    if (status === JobStatus.IN_PROGRESS && job.status !== JobStatus.DRAFT && !this.isAdmin(actor)) {
+      throw new ForbiddenException('Only admin can update a confirmed job status');
     }
     const oldStatus = job.status;
     const update: Partial<Job> = { status, updatedBy: actorId };
