@@ -10,6 +10,7 @@ import { ServicePrice } from '../../models/service-price.entity';
 import { Job, JobStatus } from '../../models/job.entity';
 import { Partner } from '../../models/partner.entity';
 import { Branch } from '../../models/branch.entity';
+import { User } from '../../models/user.entity';
 import { AccountingStatus, PaymentStatus, RevenueEntry } from '../../models/revenue-entry.entity';
 import { CreateDebitNoteDto, UpdateDebitNoteDto, VoidDebitNoteDto, DebitNoteFilterDto, RecordDebitNotePaymentDto } from './dto/debit-note.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -32,6 +33,7 @@ export class DebitNotesService {
     @InjectRepository(RevenueEntry) private revenueRepo: Repository<RevenueEntry>,
     @InjectRepository(Partner) private partnerRepo: Repository<Partner>,
     @InjectRepository(Branch) private branchRepo: Repository<Branch>,
+    @InjectRepository(User) private userRepo: Repository<User>,
     private dataSource: DataSource,
     private auditSvc: AuditLogsService,
   ) {}
@@ -390,7 +392,8 @@ export class DebitNotesService {
 
   async exportPdf(id: number, actor?: AuthenticatedUser) {
     const context = await this.buildExportContext(id, actor);
-    const doc = new PDFDocument({ margin: 24, size: 'A4' });
+    const printedBy = await this.resolvePrintedBy(actor);
+    const doc = new PDFDocument({ margin: 20, size: 'A4', bufferPages: true });
     this.registerPdfFont(doc);
 
     const chunks: Buffer[] = [];
@@ -474,41 +477,58 @@ export class DebitNotesService {
 
     let y = 360;
     this.drawDebitHeader(doc, y, blue);
-    y += 23;
+    y += 20;
 
     const groupCode = context.note.groupCode || context.job?.declarationNo || context.job?.bookingRef || context.job?.jobCode || context.noteNo;
-    doc.rect(left, y, right - left, 22).stroke(border);
+    doc.rect(left, y, right - left, 18).stroke(border);
     this.setPdfFont(doc, 'bold');
-    doc.fontSize(9).text(groupCode, left + 3, y + 6, { width: 190 });
+    doc.fontSize(8).text(groupCode, left + 3, y + 5, { width: 190 });
     this.setPdfFont(doc);
-    y += 22;
+    y += 18;
 
     for (const line of context.lines) {
+      const debitColumns = this.debitPdfColumns();
       const rowHeight = Math.max(
-        34,
-        this.estimateRowHeight(doc, line.description || '-', 85),
-        this.estimateRowHeight(doc, line.chargeNote || '', 88),
-        this.estimateRowHeight(doc, line.lineNote || '', 62),
+        26,
+        this.estimateRowHeight(doc, line.description || '-', debitColumns[0].width - 8),
+        this.estimateRowHeight(doc, line.chargeNote || '', debitColumns[1].width - 8),
+        this.estimateRowHeight(doc, line.lineNote || '', debitColumns[3].width - 8),
       );
-      if (y + rowHeight + 96 > 805) {
+      if (y + rowHeight + 82 > 790) {
         doc.addPage();
         doc.rect(1, 1, 593, 840).stroke('#222222');
         y = 32;
         this.drawDebitHeader(doc, y, blue);
-        y += 23;
+        y += 20;
       }
       this.drawDebitLine(doc, y, rowHeight, line, context);
       y += rowHeight;
     }
 
+    if (y + 104 > 790) {
+      doc.addPage();
+      doc.rect(1, 1, 593, 840).stroke('#222222');
+      y = 32;
+    }
+
     this.drawTotalRow(doc, y, 'Pre-tax Total:', preTax, preTax - totalCredit, false);
-    y += 32;
+    y += 24;
     this.drawPaymentAndTaxBlock(doc, y, context, totalAmount);
-    y += 64;
+    y += 52;
 
     this.setPdfFont(doc);
-    doc.fontSize(10).text('Say :', 27, y + 8, { width: 36 });
-    doc.text(`${this.amountToEnglishWords(totalAmount)} ${context.note.currency || 'VND'}`, 67, y + 8, { width: 490 });
+    doc.fontSize(7.5).text('Say :', 27, y + 6, { width: 34 });
+    doc.text(`${this.amountToEnglishWords(totalAmount)} ${context.note.currency || 'VND'}`, 65, y + 6, { width: 492 });
+    y += 24;
+
+    if (y + 152 > 790) {
+      doc.addPage();
+      doc.rect(1, 1, 593, 840).stroke('#222222');
+      y = 32;
+    }
+
+    this.drawCompanyPaymentFooter(doc, y, printedBy);
+    this.drawPdfPageNumbers(doc);
     doc.end();
 
     return { fileName: `${context.noteNo}.pdf`, buffer: await done };
@@ -764,10 +784,12 @@ export class DebitNotesService {
   }
 
   private drawCompanyHeader(doc: any, context: Awaited<ReturnType<typeof this.buildExportContext>>) {
+    doc.save();
     doc.fillColor('#C82D32').fontSize(15).text('DuongMinh', 24, 32, { width: 96 });
     doc.text('Logistics', 24, 50, { width: 96 });
     doc.strokeColor('#C79B3A').lineWidth(2).moveTo(24, 84).lineTo(103, 84).stroke();
     doc.lineWidth(5).moveTo(92, 75).lineTo(122, 61).lineTo(135, 65).stroke('#C79B3A');
+    doc.restore();
 
     this.setPdfFont(doc, 'bold');
     doc.fillColor('#111111').fontSize(12).text('Cong ty Co Phan Giao Nhan Van Tai Quoc Te Duong', 122, 38, { width: 330 });
@@ -812,9 +834,9 @@ export class DebitNotesService {
     const columns = this.debitPdfColumns();
     const titles = ['Description', 'Charge Note', "Q'ty", 'Note', 'Debit', 'Credit', 'VAT', 'Amount'];
     columns.forEach((column, index) => {
-      doc.rect(column.x, y, column.width, 23).fillAndStroke(fill, '#D0D0D0');
+      doc.rect(column.x, y, column.width, 20).fillAndStroke(fill, '#D0D0D0');
       this.setPdfFont(doc, 'bold');
-      doc.fillColor('#111111').fontSize(9).text(titles[index], column.x + 3, y + 7, {
+      doc.fillColor('#111111').fontSize(7.5).text(titles[index], column.x + 2, y + 6, {
         width: column.width - 6,
         align: 'center',
       });
@@ -842,9 +864,9 @@ export class DebitNotesService {
     ];
     columns.forEach((column, index) => {
       doc.rect(column.x, y, column.width, height).stroke('#D0D0D0');
-      doc.fillColor('#111111').fontSize(9).text(values[index], column.x + 3, y + 6, {
-        width: column.width - 6,
-        height: height - 8,
+      doc.fillColor('#111111').fontSize(7.5).text(values[index], column.x + 2, y + 4, {
+        width: column.width - 4,
+        height: height - 6,
         align: index >= 4 ? 'right' : index === 2 || index === 3 ? 'center' : 'left',
       });
     });
@@ -852,53 +874,140 @@ export class DebitNotesService {
 
   private drawTotalRow(doc: any, y: number, label: string, debit: number, amount: number, bold: boolean) {
     const columns = this.debitPdfColumns();
-    columns.forEach((column) => doc.rect(column.x, y, column.width, 32).stroke('#D0D0D0'));
+    columns.forEach((column) => doc.rect(column.x, y, column.width, 24).stroke('#D0D0D0'));
     this.setPdfFont(doc, bold ? 'bold' : 'regular');
-    doc.fillColor('#111111').fontSize(9).text(label, columns[0].x + 3, y + 10, {
+    doc.fillColor('#111111').fontSize(8).text(label, columns[0].x + 3, y + 7, {
       width: columns[0].width + columns[1].width + columns[2].width - 6,
       align: 'right',
     });
-    doc.text(this.formatMoney(debit), columns[4].x + 3, y + 10, { width: columns[4].width - 6, align: 'right' });
-    doc.text(this.formatMoney(amount), columns[7].x + 3, y + 10, { width: columns[7].width - 6, align: 'right' });
+    doc.text(this.formatMoney(debit), columns[4].x + 3, y + 7, { width: columns[4].width - 6, align: 'right' });
+    doc.text(this.formatMoney(amount), columns[7].x + 3, y + 7, { width: columns[7].width - 6, align: 'right' });
     this.setPdfFont(doc);
   }
 
   private drawPaymentAndTaxBlock(doc: any, y: number, context: Awaited<ReturnType<typeof this.buildExportContext>>, totalAmount: number) {
-    doc.rect(24, y, 249, 64).stroke('#D0D0D0');
-    doc.fontSize(9).fillColor('#111111').text('Please make payment to:', 27, y + 6);
-    doc.text('Bank Name', 27, y + 20);
-    doc.text('Account No.', 27, y + 34);
-    doc.text(context.note.bankName || '-', 86, y + 20, { width: 180 });
-    doc.text(context.note.bankAccountNo || context.note.paymentAccountRef || '-', 86, y + 34, { width: 180 });
+    doc.rect(24, y, 249, 52).stroke('#D0D0D0');
+    doc.fontSize(8).fillColor('#111111').text('Please make payment to:', 27, y + 5);
+    doc.text('Bank Name', 27, y + 18);
+    doc.text('Account No.', 27, y + 31);
+    doc.text(context.note.bankName || '-', 86, y + 18, { width: 180 });
+    doc.text(context.note.bankAccountNo || context.note.paymentAccountRef || '-', 86, y + 31, { width: 180 });
 
-    doc.rect(273, y, 298, 32).stroke('#D0D0D0');
-    doc.rect(273, y + 32, 298, 32).stroke('#D0D0D0');
+    doc.rect(273, y, 298, 26).stroke('#D0D0D0');
+    doc.rect(273, y + 26, 298, 26).stroke('#D0D0D0');
     const totalVat = context.lines.reduce((sum, line) => sum + Number(line.vatAmount || 0), 0);
-    doc.text('Tax:', 305, y + 10, { width: 60, align: 'right' });
-    doc.text(this.formatMoney(totalVat), 514, y + 10, { width: 52, align: 'right' });
+    doc.text('Tax:', 305, y + 8, { width: 60, align: 'right' });
+    doc.text(this.formatMoney(totalVat), 514, y + 8, { width: 52, align: 'right' });
     this.setPdfFont(doc, 'bold');
-    doc.text('Total:', 305, y + 42, { width: 60, align: 'right' });
-    doc.text(this.formatMoney(totalAmount), 514, y + 42, { width: 52, align: 'right' });
+    doc.text('Total:', 305, y + 34, { width: 60, align: 'right' });
+    doc.text(this.formatMoney(totalAmount), 514, y + 34, { width: 52, align: 'right' });
     this.setPdfFont(doc);
+  }
+
+  private drawCompanyPaymentFooter(doc: any, y: number, printedBy: string) {
+    const left = 14;
+    this.setPdfFont(doc, 'bold');
+    doc.fillColor('#111111').fontSize(7.2).text('DUONG MINH LOGISTICS CO.,LTD', left, y, { width: 560 });
+    doc.text('ADD: 417/49/32 QUANG TRUNG, WARD 10, GO VAP DIST, HCM CITY, VIETNAM', left, y + 9, { width: 560 });
+    doc.text('TEL: 84-8-38371177 - FAX: 84-8-38371199', left, y + 18, { width: 560 });
+
+    const bankRows = [
+      ['TAX CODE', '0312 581 864'],
+      ['VND ACCOUNT NO', '114000135911'],
+      ['USD ACCOUNT NO', '112000204147'],
+      ['BANK NAME', 'VIETINBANK - HO CHI MINH CITY BRANCH'],
+      ['BANK ADD', '79A HAM NGHI STREET, DIST.1, HCM CITY'],
+      ['SWIFT CODE', 'ICBVVNVX900'],
+    ];
+
+    bankRows.forEach(([label, value], index) => {
+      const rowY = y + 31 + index * 8.5;
+      doc.text(label, left, rowY, { width: 112 });
+      doc.text(':', left + 112, rowY, { width: 8 });
+      doc.text(value, left + 122, rowY, { width: 420 });
+    });
+
+    this.setPdfFont(doc);
+    const signY = y + 84;
+    doc.fontSize(7).text('E.&.O.E', left, signY, { width: 120 });
+    doc.text('Authorized Signature', left, signY + 13, { width: 160 });
+
+    this.drawBranchFooter(doc, y + 109);
+
+    const printY = Math.min(y + 143, 778);
+    doc.fontSize(5.8).fillColor('#111111').text(`Print by:${printedBy || '-'}`, left, printY, { width: 220, lineBreak: false });
+    doc.text(this.formatPrintDateTime(new Date()), left, printY + 8, { width: 220, lineBreak: false });
+    this.setPdfFont(doc);
+  }
+
+  private drawBranchFooter(doc: any, startY: number) {
+    const rows = [
+      ['HEAD OFFICE', '59 Tran Dinh Xu, Cau Kho Ward, Dist. 1, HCM City, Viet Nam', 'Tel: 84.8-3837 1177 - Fax: 84.8-3837 119'],
+      ['BRANCH HCM', '417/49/32 Quang Trung Str., Ward 10, Go Vap Dist., HCMC , Viet Nam', 'Tel: 84.8-3837 2363 - Fax: 84.8-3837 119'],
+      ['BRANCH BINH THUAN', 'Phu Khanh Village, Ham My Commune, Ham Thuan Nam Dist., Binh Thuan', 'Pro-Tel: 062 3899 199. Fax: 062 3899 198'],
+    ];
+    rows.forEach(([label, address, contact], index) => {
+      const rowY = startY + index * 11;
+      doc.save();
+      doc.fillColor('#D34242').moveTo(16, rowY).lineTo(23, rowY + 5.5).lineTo(16, rowY + 11).closePath().fill();
+      doc.restore();
+      this.setPdfFont(doc, 'bold');
+      doc.fillColor('#D34242').fontSize(5.4).text(label, 29, rowY + 2, { width: 72 });
+      doc.fillColor('#111111').text(address, 102, rowY + 2, { width: 304 });
+      doc.text(contact, 421, rowY + 2, { width: 150, align: 'left' });
+    });
+    this.setPdfFont(doc);
+  }
+
+  private async resolvePrintedBy(actor?: AuthenticatedUser) {
+    if (!actor?.id) return actor?.username || '-';
+    const user = await this.userRepo.findOne({ where: { id: actor.id } });
+    return user?.fullName || user?.username || actor.username || `User #${actor.id}`;
+  }
+
+  private drawPdfPageNumbers(doc: any) {
+    const range = doc.bufferedPageRange();
+    for (let index = 0; index < range.count; index += 1) {
+      doc.switchToPage(range.start + index);
+      this.setPdfFont(doc);
+      doc.fillColor('#111111').fontSize(5.8).text(`${index + 1} of ${range.count}`, 543, 804, {
+        width: 38,
+        align: 'right',
+        lineBreak: false,
+      });
+    }
+  }
+
+  private formatPrintDateTime(date: Date) {
+    return new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Ho_Chi_Minh',
+    }).format(date).replace(',', '');
   }
 
   private debitPdfColumns() {
     return [
-      { x: 24, width: 92 },
-      { x: 116, width: 93 },
-      { x: 209, width: 68 },
-      { x: 277, width: 68 },
-      { x: 345, width: 64 },
-      { x: 409, width: 58 },
-      { x: 467, width: 50 },
-      { x: 517, width: 54 },
+      { x: 24, width: 108 },
+      { x: 132, width: 88 },
+      { x: 220, width: 55 },
+      { x: 275, width: 70 },
+      { x: 345, width: 62 },
+      { x: 407, width: 54 },
+      { x: 461, width: 48 },
+      { x: 509, width: 62 },
     ];
   }
 
   private estimateRowHeight(doc: any, text: string, width: number) {
     this.setPdfFont(doc);
-    doc.fontSize(9);
-    return Math.ceil(doc.heightOfString(text || '-', { width, align: 'left' })) + 14;
+    doc.fontSize(7.5);
+    return Math.ceil(doc.heightOfString(text || '-', { width, align: 'left' })) + 9;
   }
 
   private resolveMovingType(job?: Job | null) {
