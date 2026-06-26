@@ -3,7 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import ExcelJS from 'exceljs';
 import PDFDocument = require('pdfkit');
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
+import * as path from 'path';
 import { DebitNote, DebitNoteStatus } from '../../models/debit-note.entity';
 import { DebitNoteLine } from '../../models/debit-note-line.entity';
 import { ServicePrice } from '../../models/service-price.entity';
@@ -784,20 +785,19 @@ export class DebitNotesService {
   }
 
   private drawCompanyHeader(doc: any, context: Awaited<ReturnType<typeof this.buildExportContext>>) {
-    doc.save();
-    doc.fillColor('#C82D32').fontSize(15).text('DuongMinh', 24, 32, { width: 96 });
-    doc.text('Logistics', 24, 50, { width: 96 });
-    doc.strokeColor('#C79B3A').lineWidth(2).moveTo(24, 84).lineTo(103, 84).stroke();
-    doc.lineWidth(5).moveTo(92, 75).lineTo(122, 61).lineTo(135, 65).stroke('#C79B3A');
-    doc.restore();
+    const logoPath = path.resolve(__dirname, '../../assets/images/duongminh.png');
+    if (existsSync(logoPath)) {
+      const logoBuffer = readFileSync(logoPath);
+      doc.image(logoBuffer, 8, 36, { width: 132, height: 62 });
+    }
 
     this.setPdfFont(doc, 'bold');
-    doc.fillColor('#111111').fontSize(12).text('Cong ty Co Phan Giao Nhan Van Tai Quoc Te Duong', 122, 38, { width: 330 });
-    doc.text('Minh', 122, 53, { width: 280 });
+    doc.fillColor('#111111').fontSize(12).text('Cong ty Co Phan Giao Nhan Van Tai Quoc Te Duong', 144, 38, { width: 330 });
+    doc.text('Minh', 144, 53, { width: 280 });
     this.setPdfFont(doc);
-    doc.fontSize(9).text(context.branch?.address || '59 Tran Dinh Xu, Phuong Cau kho, Quan 1, Tp Ho chi Minh, VIETNAM', 122, 70, { width: 350 });
-    doc.text('Tel :84-2838371177    Fax : 84-2838371199', 122, 83, { width: 330 });
-    doc.text('Email : Info@duongminhvn.com', 122, 96, { width: 260 });
+    doc.fontSize(9).text(context.branch?.address || '59 Tran Dinh Xu, Phuong Cau kho, Quan 1, Tp Ho chi Minh, VIETNAM', 144, 70, { width: 350 });
+    doc.text('Tel :84-2838371177    Fax : 84-2838371199', 144, 83, { width: 330 });
+    doc.text('Email : Info@duongminhvn.com', 144, 96, { width: 260 });
   }
 
   private pdfMiniInfo(doc: any, x: number, y: number, label: string, value: string) {
