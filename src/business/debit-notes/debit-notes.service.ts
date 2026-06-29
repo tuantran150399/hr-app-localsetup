@@ -477,33 +477,59 @@ export class DebitNotesService {
     ], '#FFFFFF', false);
 
     let y = 360;
-    this.drawDebitHeader(doc, y, blue);
-    y += 20;
+    const groupedLines = new Map<number, { job: Job | null; lines: DebitNoteLine[] }>();
+    context.lines.forEach((line) => {
+      const job = this.resolveLineJob(context, line);
+      const jobId = line.jobId || job?.id || context.note.jobId;
+      const group = groupedLines.get(jobId) || { job: job || null, lines: [] };
+      group.lines.push(line);
+      groupedLines.set(jobId, group);
+    });
 
-    const groupCode = context.note.groupCode || context.job?.declarationNo || context.job?.bookingRef || context.job?.jobCode || context.noteNo;
-    doc.rect(left, y, right - left, 18).stroke(border);
-    this.setPdfFont(doc, 'bold');
-    doc.fontSize(8).text(groupCode, left + 3, y + 5, { width: 190 });
-    this.setPdfFont(doc);
-    y += 18;
+    const groups = [...groupedLines.values()];
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+      const group = groups[groupIndex];
+      const defaultGroupCode = context.note.groupCode || group.job?.declarationNo || group.job?.bookingRef || group.job?.jobCode || context.noteNo;
+      const groupCode = groups.length > 1 ? group.job?.jobCode || defaultGroupCode : defaultGroupCode;
 
-    for (const line of context.lines) {
-      const debitColumns = this.debitPdfColumns();
-      const rowHeight = Math.max(
-        26,
-        this.estimateRowHeight(doc, line.description || '-', debitColumns[0].width - 8),
-        this.estimateRowHeight(doc, line.chargeNote || '', debitColumns[1].width - 8),
-        this.estimateRowHeight(doc, line.lineNote || '', debitColumns[3].width - 8),
-      );
-      if (y + rowHeight + 82 > 790) {
+      if (groupIndex > 0) y += 10;
+      if (y + 64 > 790) {
         doc.addPage();
         doc.rect(1, 1, 593, 840).stroke('#222222');
         y = 32;
-        this.drawDebitHeader(doc, y, blue);
-        y += 20;
       }
-      this.drawDebitLine(doc, y, rowHeight, line, context);
-      y += rowHeight;
+
+      this.drawDebitHeader(doc, y, blue);
+      y += 20;
+      doc.rect(left, y, right - left, 18).stroke(border);
+      this.setPdfFont(doc, 'bold');
+      doc.fontSize(8).text(groupCode, left + 3, y + 5, { width: right - left - 6 });
+      this.setPdfFont(doc);
+      y += 18;
+
+      for (const line of group.lines) {
+        const debitColumns = this.debitPdfColumns();
+        const rowHeight = Math.max(
+          26,
+          this.estimateRowHeight(doc, line.description || line.serviceType || '-', debitColumns[0].width - 8),
+          this.estimateRowHeight(doc, line.chargeNote || '', debitColumns[1].width - 8),
+          this.estimateRowHeight(doc, line.lineNote || '', debitColumns[3].width - 8),
+        );
+        if (y + rowHeight + 82 > 790) {
+          doc.addPage();
+          doc.rect(1, 1, 593, 840).stroke('#222222');
+          y = 32;
+          this.drawDebitHeader(doc, y, blue);
+          y += 20;
+          doc.rect(left, y, right - left, 18).stroke(border);
+          this.setPdfFont(doc, 'bold');
+          doc.fontSize(8).text(`${groupCode} (continued)`, left + 3, y + 5, { width: right - left - 6 });
+          this.setPdfFont(doc);
+          y += 18;
+        }
+        this.drawDebitLine(doc, y, rowHeight, line, context);
+        y += rowHeight;
+      }
     }
 
     if (y + 104 > 790) {
@@ -853,7 +879,7 @@ export class DebitNotesService {
     const creditAmount = Number(line.creditAmount || 0);
     const vatAmount = Number(line.vatAmount || 0);
     const values = [
-      [lineJob?.jobCode, line.description || line.serviceType || '-'].filter(Boolean).join(' - '),
+      line.description || line.serviceType || '-',
       line.chargeNote || `${this.formatMoney(unitPrice)} ${line.currency || context.note.currency || 'VND'}/${this.resolveLineUnit(lineJob)}`,
       quantity ? `${this.formatMoney(quantity)} x ${this.resolveLineUnit(lineJob)}` : '-',
       line.lineNote || '',
