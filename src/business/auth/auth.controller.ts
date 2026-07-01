@@ -41,7 +41,7 @@ export class AuthController {
     // Express derives req.ip from the socket and the centrally configured
     // TRUST_PROXY_HOPS value. Reading forwarding headers directly here would
     // let an untrusted client spoof its address and bypass an IP block.
-    return req.ip || req.socket.remoteAddress;
+    return req.ips?.[0] || req.ip || req.socket.remoteAddress;
   }
 
   private getHeader(req: Request, name: string) {

@@ -24,6 +24,15 @@ try {
   Copy-Item -LiteralPath (Join-Path $root 'web.config') -Destination $packageDir -Force
   Copy-Item -LiteralPath (Join-Path $root '.env.example') -Destination $packageDir -Force
 
+  $runtimeEnv = Join-Path $root '.env'
+  $prodEnv = Join-Path $root '.env.prod'
+  if (Test-Path $runtimeEnv) {
+    Copy-Item -LiteralPath $runtimeEnv -Destination (Join-Path $packageDir '.env') -Force
+  }
+  elseif (Test-Path $prodEnv) {
+    Copy-Item -LiteralPath $prodEnv -Destination (Join-Path $packageDir '.env') -Force
+  }
+
   if (Test-Path $zipLatest) {
     Remove-Item -LiteralPath $zipLatest -Force
   }
@@ -31,8 +40,9 @@ try {
     Remove-Item -LiteralPath $zipVersioned -Force
   }
 
-  Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $zipLatest -Force
-  Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $zipVersioned -Force
+  $packageItems = Get-ChildItem -LiteralPath $packageDir -Force | Select-Object -ExpandProperty FullName
+  Compress-Archive -LiteralPath $packageItems -DestinationPath $zipLatest -Force
+  Compress-Archive -LiteralPath $packageItems -DestinationPath $zipVersioned -Force
 
   Write-Host "Created:"
   Write-Host " - $zipLatest"
