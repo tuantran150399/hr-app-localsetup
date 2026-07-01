@@ -17,6 +17,8 @@ import { CreateDebitNoteDto, UpdateDebitNoteDto, VoidDebitNoteDto, DebitNoteFilt
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
 import { assertBranchAccess, AuthenticatedUser, getScopedBranchId } from '../../common/auth/branch-scope.util';
+import { CobEntry, CobStatus, CobType } from '../../models/cob-entry.entity';
+import { CustomerDebtService } from '../customer-debt/customer-debt.service';
 
 @Injectable()
 export class DebitNotesService {
@@ -35,8 +37,10 @@ export class DebitNotesService {
     @InjectRepository(Partner) private partnerRepo: Repository<Partner>,
     @InjectRepository(Branch) private branchRepo: Repository<Branch>,
     @InjectRepository(User) private userRepo: Repository<User>,
+    @InjectRepository(CobEntry) private cobRepo: Repository<CobEntry>,
     private dataSource: DataSource,
     private auditSvc: AuditLogsService,
+    private customerDebtService: CustomerDebtService,
   ) {}
 
   private enforceBranchAccess(user: AuthenticatedUser | undefined, branchId?: number | null) {
@@ -58,8 +62,11 @@ export class DebitNotesService {
       const jobs = await this.resolveDebitNoteJobs(dto);
       const primaryJob = jobs[0];
       jobs.forEach((job) => this.enforceBranchAccess(actor, job.branchId));
-      await this.validateLineItemsAgainstPricing(em, dto.lineItems || []);
-      const totalAmount = this.calculateLineTotal(dto.lineItems, dto.amount);
+      await em.findOne(Partner, { where: { id: primaryJob.partnerId }, lock: { mode: 'pessimistic_write' } });
+      const lineItems = await this.prepareLineItems(em, dto.lineItems || [], primaryJob.partnerId, jobs);
+      await this.validateLineItemsAgainstPricing(em, lineItems);
+      const totalAmount = this.calculateLineTotal(lineItems, dto.amount);
+      await this.ensureDebitLimit(em, primaryJob.partnerId, totalAmount, undefined, lineItems);
       const note = await em.save(DebitNote, em.create(DebitNote, {
         partnerId: primaryJob.partnerId,
         jobId: primaryJob.id,
@@ -88,8 +95,11 @@ export class DebitNotesService {
         updatedBy: actor.id,
       }));
 
-      await this.saveLineItems(em, note.id, dto.lineItems || [], note.currency, primaryJob.id);
-      return this.syncReceivable(em, note, actor.id);
+      await this.saveLineItems(em, note.id, lineItems, note.currency, primaryJob.id);
+      await this.syncCobLinks(em, note.id, lineItems, []);
+      const synced = await this.syncReceivable(em, note, actor.id);
+      await this.customerDebtService.refreshPartnerActualDebt(note.partnerId, em);
+      return synced;
     });
 
     await this.auditSvc.log({
@@ -113,6 +123,37 @@ export class DebitNotesService {
     return paginate(await qb.getManyAndCount(), page, limit);
   }
 
+  async findCobCandidates(partnerId: number, jobIds: number[], debitNoteId?: number, actor?: AuthenticatedUser) {
+    const jobs = await this.jobRepo.find({ where: { id: In(jobIds) } });
+    if (jobs.length !== jobIds.length || jobs.some((job) => job.partnerId !== partnerId)) {
+      throw new BadRequestException('All jobs must belong to the selected customer');
+    }
+    jobs.forEach((job) => this.enforceBranchAccess(actor, job.branchId));
+    const qb = this.cobRepo.createQueryBuilder('c')
+      .where('c.type = :type', { type: CobType.CHARGE_ON_BEHALF })
+      .andWhere('c.status = :status', { status: CobStatus.OPEN })
+      .andWhere('c.partnerId = :partnerId', { partnerId })
+      .andWhere('c.jobId IN (:...jobIds)', { jobIds });
+    if (debitNoteId) {
+      qb.andWhere('(c.billedDebitNoteId IS NULL OR c.billedDebitNoteId = :debitNoteId)', { debitNoteId });
+    } else {
+      qb.andWhere('c.billedDebitNoteId IS NULL');
+    }
+    return qb.orderBy('c.createdAt', 'ASC').getMany();
+  }
+
+  async previewDebt(dto: CreateDebitNoteDto & { debitNoteId?: number }, actor?: AuthenticatedUser) {
+    const jobs = await this.resolveDebitNoteJobs(dto);
+    jobs.forEach((job) => this.enforceBranchAccess(actor, job.branchId));
+    const lineItems = await this.prepareLineItems(undefined, dto.lineItems || [], jobs[0].partnerId, jobs, dto.debitNoteId);
+    return this.customerDebtService.previewDebitDebt({
+      partnerId: jobs[0].partnerId,
+      amount: this.calculateLineTotal(lineItems, dto.amount),
+      debitNoteId: dto.debitNoteId,
+      cobEntryIds: this.collectCobIds(lineItems),
+    });
+  }
+
   async findOne(id: number, actor?: AuthenticatedUser) {
     const note = await this.noteRepo.findOne({ where: { id } });
     if (!note) throw new NotFoundException('Debit note not found');
@@ -124,6 +165,7 @@ export class DebitNotesService {
 
   async update(id: number, dto: UpdateDebitNoteDto, actor: AuthenticatedUser) {
     const note = await this.findOneOrFail(id);
+    const previousPartnerId = note.partnerId;
     await this.enforceNoteBranchAccess(note, actor);
     if (note.lockedAt && !this.isAdmin(actor)) {
       throw new ForbiddenException('Only admin can edit a locked debit note');
@@ -136,9 +178,16 @@ export class DebitNotesService {
       const jobs = await this.resolveDebitNoteJobs(dto, note.jobId);
       const primaryJob = jobs[0];
       jobs.forEach((job) => this.enforceBranchAccess(actor, job.branchId));
+      await em.findOne(Partner, { where: { id: primaryJob.partnerId }, lock: { mode: 'pessimistic_write' } });
+      const oldLines = await em.find(DebitNoteLine, { where: { debitNoteId: id } });
+      const lineItems = dto.lineItems
+        ? await this.prepareLineItems(em, dto.lineItems, primaryJob.partnerId, jobs, id)
+        : oldLines;
       if (dto.lineItems) {
-        await this.validateLineItemsAgainstPricing(em, dto.lineItems);
+        await this.validateLineItemsAgainstPricing(em, lineItems);
       }
+      const nextAmount = dto.lineItems ? this.calculateLineTotal(lineItems, dto.amount) : Number(dto.amount ?? note.amount);
+      await this.ensureDebitLimit(em, primaryJob.partnerId, nextAmount, id, lineItems);
       Object.assign(note, {
         partnerId: primaryJob.partnerId,
         jobId: primaryJob.id,
@@ -157,16 +206,22 @@ export class DebitNotesService {
         description: dto.description ?? note.description,
         paymentMethod: dto.paymentMethod ?? note.paymentMethod,
         paymentAccountRef: dto.paymentAccountRef ?? note.paymentAccountRef,
-        amount: dto.lineItems ? this.calculateLineTotal(dto.lineItems, dto.amount) : dto.amount ?? note.amount,
+        amount: nextAmount,
         updatedBy: actor.id,
       });
 
       const saved = await em.save(DebitNote, note);
       if (dto.lineItems) {
         await em.delete(DebitNoteLine, { debitNoteId: id });
-        await this.saveLineItems(em, id, dto.lineItems, saved.currency, primaryJob.id);
+        await this.saveLineItems(em, id, lineItems, saved.currency, primaryJob.id);
+        await this.syncCobLinks(em, id, lineItems, oldLines);
       }
-      return this.syncReceivable(em, saved, actor.id);
+      const synced = await this.syncReceivable(em, saved, actor.id);
+      await this.customerDebtService.refreshPartnerActualDebt(saved.partnerId, em);
+      if (previousPartnerId !== saved.partnerId) {
+        await this.customerDebtService.refreshPartnerActualDebt(previousPartnerId, em);
+      }
+      return synced;
     });
   }
 
@@ -179,8 +234,13 @@ export class DebitNotesService {
     if (note.status !== DebitNoteStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT debit notes can be deleted');
     }
-    await this.lineRepo.delete({ debitNoteId: id });
-    await this.noteRepo.delete(id);
+    await this.dataSource.transaction(async (em) => {
+      const lines = await em.find(DebitNoteLine, { where: { debitNoteId: id } });
+      await this.syncCobLinks(em, id, [], lines);
+      await em.delete(DebitNoteLine, { debitNoteId: id });
+      await em.delete(DebitNote, id);
+      await this.customerDebtService.refreshPartnerActualDebt(note.partnerId, em);
+    });
     await this.auditSvc.log({ entityName: 'DebitNote', entityId: id, action: 'DELETE', userId: actor.id });
     return { deleted: true };
   }
@@ -224,24 +284,31 @@ export class DebitNotesService {
       throw new BadRequestException('Debit note is already voided');
     }
     const oldStatus = note.status;
-    note.status = DebitNoteStatus.VOIDED;
-    note.voidedAt = new Date();
-    note.voidedBy = actor.id;
-    note.voidReason = reason;
-    note.updatedBy = actor.id;
-    if (note.receivableEntryId) {
-      await this.revenueRepo.update(note.receivableEntryId, {
-        status: AccountingStatus.VOIDED,
-        voidedAt: new Date(),
-        voidedBy: actor.id,
-        updatedBy: actor.id,
-      });
-    }
+    const saved = await this.dataSource.transaction(async (em) => {
+      note.status = DebitNoteStatus.VOIDED;
+      note.voidedAt = new Date();
+      note.voidedBy = actor.id;
+      note.voidReason = reason;
+      note.updatedBy = actor.id;
+      if (note.receivableEntryId) {
+        await em.update(RevenueEntry, note.receivableEntryId, {
+          status: AccountingStatus.VOIDED,
+          voidedAt: new Date(),
+          voidedBy: actor.id,
+          updatedBy: actor.id,
+        });
+      }
+      const lines = await em.find(DebitNoteLine, { where: { debitNoteId: id } });
+      await this.syncCobLinks(em, id, [], lines);
+      const result = await em.save(DebitNote, note);
+      await this.customerDebtService.refreshPartnerActualDebt(note.partnerId, em);
+      return result;
+    });
     await this.auditSvc.log({
       entityName: 'DebitNote', entityId: id, action: 'VOID', userId: actor.id,
       oldValues: { status: oldStatus }, newValues: { status: 'VOIDED', reason },
     });
-    return this.noteRepo.save(note);
+    return saved;
   }
 
   async recordPayment(id: number, dto: RecordDebitNotePaymentDto, actor: AuthenticatedUser) {
@@ -286,6 +353,7 @@ export class DebitNotesService {
           await em.update(Job, { id: In(jobIds) }, { status: JobStatus.CLOSED, closedAt: new Date(), closedBy: actor.id, updatedBy: actor.id });
         }
       }
+      await this.customerDebtService.refreshPartnerActualDebt(note.partnerId, em);
       return updated;
     });
 
@@ -631,6 +699,107 @@ export class DebitNotesService {
     return [...new Set([note.jobId, ...lines.map((line) => line.jobId)].filter(Boolean))];
   }
 
+  private collectCobIds(lineItems: CreateDebitNoteDto['lineItems']) {
+    return [...new Set((lineItems || []).map((line) => line.cobEntryId).filter((id): id is number => Number.isFinite(Number(id))).map(Number))];
+  }
+
+  private async prepareLineItems(
+    em: EntityManager | undefined,
+    lineItems: CreateDebitNoteDto['lineItems'],
+    partnerId: number,
+    jobs: Job[],
+    debitNoteId?: number,
+  ) {
+    const items = lineItems || [];
+    const cobIds = this.collectCobIds(items);
+    if (cobIds.length !== items.filter((item) => item.cobEntryId).length) {
+      throw new BadRequestException('A charge-on-behalf entry cannot appear more than once');
+    }
+    if (!cobIds.length) return items;
+    const repo = em?.getRepository(CobEntry) || this.cobRepo;
+    const cobs = await repo.find({ where: { id: In(cobIds) } });
+    const cobMap = new Map(cobs.map((cob) => [cob.id, cob]));
+    const jobIds = new Set(jobs.map((job) => job.id));
+    for (const cobId of cobIds) {
+      const cob = cobMap.get(cobId);
+      if (!cob || cob.type !== CobType.CHARGE_ON_BEHALF || cob.status !== CobStatus.OPEN) {
+        throw new BadRequestException(`Charge-on-behalf #${cobId} is not available`);
+      }
+      if (cob.partnerId !== partnerId || !cob.jobId || !jobIds.has(cob.jobId)) {
+        throw new BadRequestException(`Charge-on-behalf #${cobId} does not belong to the selected customer/jobs`);
+      }
+      if (cob.billedDebitNoteId && cob.billedDebitNoteId !== debitNoteId) {
+        throw new BadRequestException(`Charge-on-behalf #${cobId} is already included in another Debit Note`);
+      }
+    }
+    return items.map((item) => {
+      if (!item.cobEntryId) return item;
+      const cob = cobMap.get(Number(item.cobEntryId))!;
+      return {
+        ...item,
+        jobId: cob.jobId,
+        serviceType: 'CHARGE_ON_BEHALF',
+        description: cob.description || `Charge-on-behalf #${cob.id}`,
+        quantity: 1,
+        unitPrice: Number(cob.amount),
+        amount: Number(cob.amount),
+        creditAmount: 0,
+        vatRate: 0,
+        vatAmount: 0,
+        currency: cob.currency,
+        pricingId: undefined,
+      };
+    });
+  }
+
+  private async ensureDebitLimit(
+    em: EntityManager,
+    partnerId: number,
+    amount: number,
+    debitNoteId: number | undefined,
+    lineItems: CreateDebitNoteDto['lineItems'],
+  ) {
+    const preview = await this.customerDebtService.previewDebitDebt({
+      partnerId,
+      amount,
+      debitNoteId,
+      cobEntryIds: this.collectCobIds(lineItems),
+      manager: em,
+    });
+    if (preview.exceedsLimit) {
+      throw new BadRequestException({
+        code: 'DEBT_LIMIT_EXCEEDED',
+        message: 'Customer exceeds configured debt limit',
+        ...preview,
+      });
+    }
+  }
+
+  private async syncCobLinks(
+    em: EntityManager,
+    debitNoteId: number,
+    nextLines: CreateDebitNoteDto['lineItems'],
+    previousLines: Array<Pick<DebitNoteLine, 'cobEntryId'>>,
+  ) {
+    const nextIds = this.collectCobIds(nextLines);
+    const previousIds = [...new Set(previousLines.map((line) => line.cobEntryId).filter((id): id is number => Boolean(id)))];
+    const removedIds = previousIds.filter((id) => !nextIds.includes(id));
+
+    if (removedIds.length) {
+      const removed = await em.find(CobEntry, { where: { id: In(removedIds), billedDebitNoteId: debitNoteId } });
+      await em.update(CobEntry, { id: In(removedIds), billedDebitNoteId: debitNoteId }, { billedDebitNoteId: null });
+      const revenueIds = removed.map((cob) => cob.receivableEntryId).filter(Boolean);
+      if (revenueIds.length) await em.update(RevenueEntry, { id: In(revenueIds) }, { status: AccountingStatus.POSTED });
+    }
+
+    if (nextIds.length) {
+      const selected = await em.find(CobEntry, { where: { id: In(nextIds) } });
+      await em.update(CobEntry, { id: In(nextIds) }, { billedDebitNoteId: debitNoteId });
+      const revenueIds = selected.map((cob) => cob.receivableEntryId).filter(Boolean);
+      if (revenueIds.length) await em.update(RevenueEntry, { id: In(revenueIds) }, { status: AccountingStatus.VOIDED });
+    }
+  }
+
   private calculateLineTotal(lineItems: CreateDebitNoteDto['lineItems'], fallbackAmount?: number) {
     if (!lineItems?.length) return Number(fallbackAmount || 0);
     return lineItems.reduce((sum, item) => {
@@ -694,6 +863,7 @@ export class DebitNotesService {
         vatAmount,
         currency: item.currency || currency || 'VND',
         pricingId: item.pricingId,
+        cobEntryId: item.cobEntryId,
       });
     });
     await em.save(DebitNoteLine, lines);

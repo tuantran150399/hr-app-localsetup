@@ -7,11 +7,13 @@ import { CostEntry } from '../../models/cost-entry.entity';
 import { RevenueEntry } from '../../models/revenue-entry.entity';
 import { Job } from '../../models/job.entity';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
+import { CustomerDebtModule } from '../customer-debt/customer-debt.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([CobEntry, CostEntry, RevenueEntry, Job]),
     AuditLogsModule,
+    CustomerDebtModule,
   ],
   controllers: [CobController],
   providers: [CobService],

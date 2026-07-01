@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
 import { DebitNotesService } from './debit-notes.service';
-import { CreateDebitNoteDto, UpdateDebitNoteDto, VoidDebitNoteDto, DebitNoteFilterDto, RecordDebitNotePaymentDto } from './dto/debit-note.dto';
+import { CreateDebitNoteDto, UpdateDebitNoteDto, VoidDebitNoteDto, DebitNoteFilterDto, RecordDebitNotePaymentDto, DebitNoteCandidatesQueryDto, DebitNoteDebtPreviewDto } from './dto/debit-note.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
@@ -29,6 +29,18 @@ export class DebitNotesController {
   @Get('lookup-pricing')
   lookupPricing(@Query('partnerId') partnerId?: number, @Query('jobId') jobId?: number, @CurrentUser() user?: AuthenticatedUser) {
     return this.svc.lookupPricing(partnerId ? +partnerId : undefined, jobId ? +jobId : undefined, user);
+  }
+
+  @RequirePermission('accounting:view')
+  @Get('cob-candidates')
+  cobCandidates(@Query() query: DebitNoteCandidatesQueryDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.svc.findCobCandidates(query.partnerId, query.jobIds, query.debitNoteId, user);
+  }
+
+  @RequirePermission('accounting:view')
+  @Post('debt-preview')
+  debtPreview(@Body() dto: DebitNoteDebtPreviewDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.svc.previewDebt(dto, user);
   }
 
   @RequirePermission('accounting:view')

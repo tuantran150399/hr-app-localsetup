@@ -1,4 +1,4 @@
-import { IsOptional, IsNumber, IsString, IsArray, ValidateNested, IsEnum } from 'class-validator';
+import { IsOptional, IsNumber, IsString, IsArray, ValidateNested, IsEnum, ArrayNotEmpty } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { PaymentMethod } from '../../../models/revenue-entry.entity';
 
@@ -16,6 +16,14 @@ export class CreateDebitNoteLineDto {
   @IsOptional() @IsNumber() vatAmount?: number;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsNumber() pricingId?: number;
+  @IsOptional() @IsNumber() cobEntryId?: number;
+}
+
+export class DebitNoteCandidatesQueryDto {
+  @Transform(({ value }) => Number(value)) @IsNumber() partnerId: number;
+  @Transform(({ value }) => String(value || '').split(',').map(Number).filter(Number.isFinite))
+  @IsArray() @ArrayNotEmpty() @IsNumber({}, { each: true }) jobIds: number[];
+  @IsOptional() @Transform(({ value }) => Number(value)) @IsNumber() debitNoteId?: number;
 }
 
 export class CreateDebitNoteDto {
@@ -44,6 +52,10 @@ export class CreateDebitNoteDto {
   @ValidateNested({ each: true })
   @Type(() => CreateDebitNoteLineDto)
   lineItems?: CreateDebitNoteLineDto[];
+}
+
+export class DebitNoteDebtPreviewDto extends CreateDebitNoteDto {
+  @IsOptional() @IsNumber() debitNoteId?: number;
 }
 
 export class UpdateDebitNoteDto {

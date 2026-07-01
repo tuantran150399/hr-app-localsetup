@@ -10,6 +10,7 @@ export enum CobType {
 export enum CobStatus {
   OPEN = 'OPEN',
   SETTLED = 'SETTLED',
+  VOIDED = 'VOIDED',
 }
 
 @Entity('cob_entries')
@@ -40,6 +41,10 @@ export class CobEntry extends BaseEntity {
   @Column({ name: 'related_cob_entry_id', nullable: true })
   relatedCobEntryId: number;
 
+  /** Debit Note that absorbed this standalone receivable. */
+  @Column({ name: 'billed_debit_note_id', nullable: true })
+  billedDebitNoteId: number;
+
   @Column({ length: 10, default: 'VND' })
   currency: string;
 
@@ -65,4 +70,10 @@ export class CobEntry extends BaseEntity {
 
   @Column({ name: 'settled_by', nullable: true })
   settledBy: number;
+
+  @Column({ name: 'voided_at', type: 'datetime', nullable: true })
+  voidedAt: Date;
+
+  @Column({ name: 'voided_by', nullable: true })
+  voidedBy: number;
 }

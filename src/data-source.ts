@@ -1,8 +1,11 @@
 import { DataSource } from 'typeorm';
 import * as dotenv from 'dotenv';
 import { join } from 'path';
+import { getEnvFilePath } from './config/env-file-path';
 
-dotenv.config();
+for (const envFile of getEnvFilePath()) {
+  dotenv.config({ path: envFile, override: false });
+}
 
 /**
  * Standalone DataSource used by TypeORM CLI for migrations.

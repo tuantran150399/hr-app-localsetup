@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { VoidEntryDto } from '../accounting/dto/entry.dto';
 
 @UseGuards(JwtAuthGuard, PermissionGuard)
 @Controller('accounting')
@@ -41,6 +42,12 @@ export class CobController {
     return this.svc.settleCob(id, user.id);
   }
 
+  @RequirePermission('accounting:post')
+  @Post('cob/:id/void')
+  voidCob(@Param('id', ParseIntPipe) id: number, @Body() dto: VoidEntryDto, @CurrentUser() user: { id: number }) {
+    return this.svc.voidCob(id, dto.reason, user.id);
+  }
+
   // ─── Collect-on-behalf ───────────────────────────────────────────────────
 
   @RequirePermission('accounting:view')
@@ -59,5 +66,11 @@ export class CobController {
   @Patch('collect-on-behalf/:id/settle')
   settleCollect(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
     return this.svc.settleCollect(id, user.id);
+  }
+
+  @RequirePermission('accounting:post')
+  @Post('collect-on-behalf/:id/void')
+  voidCollect(@Param('id', ParseIntPipe) id: number, @Body() dto: VoidEntryDto, @CurrentUser() user: { id: number }) {
+    return this.svc.voidCollect(id, dto.reason, user.id);
   }
 }

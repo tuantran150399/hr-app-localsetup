@@ -6,4 +6,5 @@ module.exports = {
     '^.+\\.(t|j)s$': 'ts-jest',
   },
   testEnvironment: 'node',
+  modulePathIgnorePatterns: ['<rootDir>/.deploy-package/', '<rootDir>/dist/'],
 };

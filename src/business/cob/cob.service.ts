@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { CobEntry, CobType, CobStatus } from '../../models/cob-entry.entity';
 import { CostEntry } from '../../models/cost-entry.entity';
 import { RevenueEntry, AccountingStatus, PaymentStatus } from '../../models/revenue-entry.entity';
@@ -8,6 +8,7 @@ import { Job } from '../../models/job.entity';
 import { CreateCobDto, MarkCostAsCobDto, CobFilterDto } from './dto/cob.dto';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { paginate, getSkip } from '../../common/utils/pagination.util';
+import { CustomerDebtService } from '../customer-debt/customer-debt.service';
 
 @Injectable()
 export class CobService {
@@ -16,7 +17,9 @@ export class CobService {
     @InjectRepository(CostEntry) private costRepo: Repository<CostEntry>,
     @InjectRepository(RevenueEntry) private revenueRepo: Repository<RevenueEntry>,
     @InjectRepository(Job) private jobRepo: Repository<Job>,
+    private dataSource: DataSource,
     private auditSvc: AuditLogsService,
+    private customerDebtService: CustomerDebtService,
   ) {}
 
   // ─── Charge-on-behalf ────────────────────────────────────────────────────
@@ -65,6 +68,8 @@ export class CobService {
       newValues: { partnerId: dto.partnerId, amount: dto.amount, receivableId: receivable.id, collectEntryId: collectEntry.id },
     });
 
+    await this.customerDebtService.refreshPartnerActualDebt(saved.partnerId);
+
     return { ...saved, receivable, collectEntry };
   }
 
@@ -112,6 +117,8 @@ export class CobService {
       newValues: { costId, partnerId: dto.partnerId, receivableId: receivable.id, collectEntryId: collectEntry.id },
     });
 
+    await this.customerDebtService.refreshPartnerActualDebt(saved.partnerId);
+
     return { cobEntry: saved, receivable, collectEntry };
   }
 
@@ -120,12 +127,23 @@ export class CobService {
     if (entry.status === CobStatus.SETTLED) {
       throw new BadRequestException('Entry is already settled');
     }
+    if (entry.status === CobStatus.VOIDED) {
+      throw new BadRequestException('Entry is already voided');
+    }
+    if (entry.billedDebitNoteId) {
+      throw new BadRequestException('This charge-on-behalf is included in a Debit Note and must be paid from the Debit Note');
+    }
     entry.status = CobStatus.SETTLED;
     entry.settledAt = new Date();
     entry.settledBy = userId;
     entry.updatedBy = userId;
+    const saved = await this.cobRepo.save(entry);
+    if (entry.receivableEntryId) {
+      await this.revenueRepo.update(entry.receivableEntryId, { paymentStatus: PaymentStatus.PAID, updatedBy: userId });
+    }
+    await this.customerDebtService.refreshPartnerActualDebt(entry.partnerId);
     await this.auditSvc.log({ entityName: 'CobEntry', entityId: id, action: 'SETTLE', userId });
-    return this.cobRepo.save(entry);
+    return saved;
   }
 
   // ─── Collect-on-behalf ───────────────────────────────────────────────────
@@ -164,6 +182,118 @@ export class CobService {
 
   async settleCollect(id: number, userId: number) {
     return this.settleCob(id, userId); // Same logic
+  }
+
+  async voidCob(id: number, reason: string | undefined, userId: number) {
+    const result = await this.dataSource.transaction(async (em) => {
+      const entry = await em.findOne(CobEntry, { where: { id } });
+      if (!entry) throw new NotFoundException('COB entry not found');
+      if (entry.type !== CobType.CHARGE_ON_BEHALF) {
+        throw new BadRequestException('Only charge-on-behalf entries can be voided from this endpoint');
+      }
+      if (entry.status === CobStatus.VOIDED) {
+        throw new BadRequestException('Entry is already voided');
+      }
+      if (entry.status === CobStatus.SETTLED) {
+        throw new BadRequestException('Settled charge-on-behalf cannot be voided');
+      }
+      if (entry.billedDebitNoteId) {
+        throw new BadRequestException('This charge-on-behalf is included in a Debit Note and must be voided from the Debit Note');
+      }
+
+      const relatedEntries = entry.relatedCobEntryId
+        ? await em.find(CobEntry, {
+            where: [{ id: entry.relatedCobEntryId }, { relatedCobEntryId: entry.id }],
+          })
+        : await em.find(CobEntry, { where: { relatedCobEntryId: entry.id } });
+
+      const activeRelatedEntries = relatedEntries.filter((related) => related.status !== CobStatus.VOIDED);
+      const settledRelated = activeRelatedEntries.find((related) => related.status === CobStatus.SETTLED);
+      if (settledRelated) {
+        throw new BadRequestException('Paired collect-on-behalf is already settled and cannot be voided automatically');
+      }
+
+      const now = new Date();
+      entry.status = CobStatus.VOIDED;
+      entry.voidedAt = now;
+      entry.voidedBy = userId;
+      entry.updatedBy = userId;
+      await em.save(CobEntry, entry);
+
+      for (const related of activeRelatedEntries) {
+        related.status = CobStatus.VOIDED;
+        related.voidedAt = now;
+        related.voidedBy = userId;
+        related.updatedBy = userId;
+      }
+      if (activeRelatedEntries.length) {
+        await em.save(CobEntry, activeRelatedEntries);
+      }
+
+      if (entry.receivableEntryId) {
+        const receivable = await em.findOne(RevenueEntry, { where: { id: entry.receivableEntryId } });
+        if (receivable?.status === AccountingStatus.POSTED) {
+          await em.save(RevenueEntry, {
+            ...receivable,
+            status: AccountingStatus.VOIDED,
+            voidedAt: now,
+            voidedBy: userId,
+            updatedBy: userId,
+          });
+        }
+      }
+
+      return { entry, relatedEntries: activeRelatedEntries };
+    });
+
+    await this.customerDebtService.refreshPartnerActualDebt(result.entry.partnerId);
+    await this.auditSvc.log({
+      entityName: 'CobEntry',
+      entityId: id,
+      action: 'VOID_COB',
+      userId,
+      newValues: {
+        relatedCobEntryIds: result.relatedEntries.map((item) => item.id),
+        receivableEntryId: result.entry.receivableEntryId,
+        reason,
+      },
+    });
+    return result.entry;
+  }
+
+  async voidCollect(id: number, reason: string | undefined, userId: number) {
+    const result = await this.dataSource.transaction(async (em) => {
+      const entry = await em.findOne(CobEntry, { where: { id } });
+      if (!entry) throw new NotFoundException('COB entry not found');
+      if (entry.type !== CobType.COLLECT_ON_BEHALF) {
+        throw new BadRequestException('Only collect-on-behalf entries can be voided from this endpoint');
+      }
+      if (entry.status === CobStatus.VOIDED) {
+        throw new BadRequestException('Entry is already voided');
+      }
+      if (entry.status === CobStatus.SETTLED) {
+        throw new BadRequestException('Settled collect-on-behalf cannot be voided');
+      }
+      if (entry.relatedCobEntryId) {
+        throw new BadRequestException('This collect-on-behalf is paired with a charge-on-behalf. Please void the charge-on-behalf instead');
+      }
+
+      const now = new Date();
+      entry.status = CobStatus.VOIDED;
+      entry.voidedAt = now;
+      entry.voidedBy = userId;
+      entry.updatedBy = userId;
+      return em.save(CobEntry, entry);
+    });
+
+    await this.auditSvc.log({
+      entityName: 'CobEntry',
+      entityId: id,
+      action: 'VOID_COLLECT',
+      userId,
+      newValues: { reason },
+    });
+    return result;
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────

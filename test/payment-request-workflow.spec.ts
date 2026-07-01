@@ -25,6 +25,7 @@ function setup(currentStatus: PaymentRequestStatus) {
   const service = new PaymentRequestsService(
     {} as any, {} as any, {} as any, {} as any, {} as any,
     dataSource as any, auditLogs as any, notifications as any,
+    { refreshPartnerActualDebt: jest.fn() } as any,
   );
   jest.spyOn(service as any, 'findApprovers').mockResolvedValue([30]);
   return { service, auditLogs, notifications };

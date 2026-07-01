@@ -11,11 +11,14 @@ import { Partner } from '../../models/partner.entity';
 import { Branch } from '../../models/branch.entity';
 import { User } from '../../models/user.entity';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
+import { CobEntry } from '../../models/cob-entry.entity';
+import { CustomerDebtModule } from '../customer-debt/customer-debt.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([DebitNote, DebitNoteLine, ServicePrice, Job, RevenueEntry, Partner, Branch, User]),
+    TypeOrmModule.forFeature([DebitNote, DebitNoteLine, ServicePrice, Job, RevenueEntry, Partner, Branch, User, CobEntry]),
     AuditLogsModule,
+    CustomerDebtModule,
   ],
   controllers: [DebitNotesController],
   providers: [DebitNotesService],

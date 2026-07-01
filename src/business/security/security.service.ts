@@ -280,9 +280,17 @@ export class SecurityService {
 
   private normalizeIp(ip?: string) {
     if (!ip) return undefined;
-    const first = ip.split(',')[0]?.trim();
-    if (!first) return undefined;
-    return first.startsWith('::ffff:') ? first.replace('::ffff:', '') : first;
+    let first = ip.split(',')[0]?.trim().replace(/^"|"$/g, '');
+    if (!first || ['unknown', 'undefined', 'null'].includes(first.toLowerCase())) return undefined;
+
+    if (first.startsWith('::ffff:')) first = first.slice(7);
+    if (first === '::1') return '127.0.0.1';
+
+    const bracketedIpv6 = first.match(/^\[([^\]]+)](?::\d+)?$/);
+    if (bracketedIpv6) return bracketedIpv6[1];
+
+    const ipv4WithPort = first.match(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/);
+    return ipv4WithPort?.[1] || first;
   }
 
   private matchesIpRule(ipAddress: string, pattern: string) {

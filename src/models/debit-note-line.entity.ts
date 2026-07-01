@@ -45,4 +45,8 @@ export class DebitNoteLine extends BaseEntity {
   /** Link back to pricing tariff used for auto-fill */
   @Column({ name: 'pricing_id', nullable: true })
   pricingId: number;
+
+  /** Charge-on-behalf source. A COB entry can belong to only one active Debit Note. */
+  @Column({ name: 'cob_entry_id', nullable: true, unique: true })
+  cobEntryId: number;
 }

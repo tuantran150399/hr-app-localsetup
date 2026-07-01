@@ -13,6 +13,7 @@ import { assertBranchAccess, AuthenticatedUser, canAccessAllBranches, getScopedB
 import { NotificationsService } from '../notifications/notifications.service';
 import { User } from '../../models/user.entity';
 import { Employee, EmployeeStatus } from '../../models/employee.entity';
+import { CustomerDebtService } from '../customer-debt/customer-debt.service';
 
 export interface WorkflowRequestContext {
   ipAddress?: string;
@@ -30,6 +31,7 @@ export class PaymentRequestsService {
     private dataSource: DataSource,
     private auditLogs: AuditLogsService,
     private notifications: NotificationsService,
+    private customerDebtService: CustomerDebtService,
   ) {}
 
   private enforceBranchAccess(user: AuthenticatedUser | undefined, branchId?: number | null) {
@@ -137,6 +139,9 @@ export class PaymentRequestsService {
     });
 
     const request = result.request;
+    if (result.cobEntry) {
+      await this.customerDebtService.refreshPartnerActualDebt(result.cobEntry.partnerId);
+    }
     const audit = await this.auditLogs.log({
       entityName: 'PaymentRequest',
       entityId: request.id,

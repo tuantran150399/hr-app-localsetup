@@ -12,6 +12,10 @@ async function bootstrap() {
     logger: process.env.NODE_ENV === 'production' ? ['error', 'warn'] : ['log', 'error', 'warn', 'debug', 'verbose'],
   });
 
+  const server = app.getHttpAdapter().getInstance();
+  const configuredProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 1);
+  server.set('trust proxy', Number.isInteger(configuredProxyHops) && configuredProxyHops >= 0 ? configuredProxyHops : 1);
+
   // Gzip compression — reduces JSON payload size by ~70%
   app.use(compression());
 
@@ -82,7 +86,6 @@ async function bootstrap() {
     },
   });
 
-  const server = app.getHttpAdapter().getInstance();
   server.get('/', (_req: Request, res: Response) => {
     res.redirect('/docs');
   });

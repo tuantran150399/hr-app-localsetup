@@ -38,8 +38,19 @@ export class AuthController {
   }
 
   private getClientIp(req: Request) {
-    const forwardedFor = this.getHeader(req, 'x-forwarded-for');
-    return forwardedFor || req.socket.remoteAddress || req.ip;
+    const proxyHeaders = [
+      'cf-connecting-ip',
+      'true-client-ip',
+      'x-real-ip',
+      'x-forwarded-for',
+    ];
+
+    for (const header of proxyHeaders) {
+      const value = this.getHeader(req, header);
+      if (value?.trim()) return value;
+    }
+
+    return req.ip || req.socket.remoteAddress;
   }
 
   private getHeader(req: Request, name: string) {
