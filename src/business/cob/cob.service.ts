@@ -38,6 +38,14 @@ export class CobService {
       throw new BadRequestException('Job is required for charge-on-behalf');
     }
 
+    const job = await this.jobRepo.findOne({ where: { id: dto.jobId } });
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
+    if (job.partnerId !== dto.partnerId) {
+      throw new BadRequestException('The selected job does not belong to the selected customer');
+    }
+
     const entry = this.cobRepo.create({
       type: CobType.CHARGE_ON_BEHALF,
       partnerId: dto.partnerId,
