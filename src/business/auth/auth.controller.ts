@@ -38,18 +38,9 @@ export class AuthController {
   }
 
   private getClientIp(req: Request) {
-    const proxyHeaders = [
-      'cf-connecting-ip',
-      'true-client-ip',
-      'x-real-ip',
-      'x-forwarded-for',
-    ];
-
-    for (const header of proxyHeaders) {
-      const value = this.getHeader(req, header);
-      if (value?.trim()) return value;
-    }
-
+    // Express derives req.ip from the socket and the centrally configured
+    // TRUST_PROXY_HOPS value. Reading forwarding headers directly here would
+    // let an untrusted client spoof its address and bypass an IP block.
     return req.ip || req.socket.remoteAddress;
   }
 

@@ -29,6 +29,9 @@ export class SecurityLoginEvent extends BaseEntity {
   @Column({ name: 'device_fingerprint', length: 128, nullable: true })
   deviceFingerprint: string;
 
+  @Column({ name: 'device_info', length: 255, nullable: true })
+  deviceInfo: string;
+
   @Column({ name: 'country_code', length: 10, nullable: true })
   countryCode: string;
 

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsIn, IsInt, IsIP, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 import { IpAccessRuleType } from '../../../models/ip-access-rule.entity';
 import { SecurityAlertStatus, SecurityAlertType } from '../../../models/security-alert.entity';
@@ -46,4 +46,10 @@ export class UpdateIpAccessRuleDto {
 export class UpdateSecurityAlertStatusDto {
   @IsIn([SecurityAlertStatus.ACKNOWLEDGED, SecurityAlertStatus.RESOLVED])
   status: SecurityAlertStatus.ACKNOWLEDGED | SecurityAlertStatus.RESOLVED;
+}
+
+export class CreateBlockedIpDto {
+  @IsIP() ipAddress: string;
+  @IsOptional() @IsString() @MaxLength(150) label?: string;
+  @IsOptional() @IsString() @MaxLength(1000) reason?: string;
 }

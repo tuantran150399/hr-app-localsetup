@@ -6,6 +6,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SecurityService } from './security.service';
 import {
   CreateIpAccessRuleDto,
+  CreateBlockedIpDto,
   IpAccessRuleFilterDto,
   SecurityAlertFilterDto,
   SecurityLoginEventFilterDto,
@@ -28,6 +29,12 @@ export class SecurityController {
   @Get('alerts')
   findAlerts(@Query() filter: SecurityAlertFilterDto) {
     return this.svc.findAlerts(filter);
+  }
+
+  @RequirePermission('security:view')
+  @Get('features')
+  getFeatures() {
+    return this.svc.getFeatures();
   }
 
   @RequirePermission('security:manage')
@@ -66,5 +73,23 @@ export class SecurityController {
   @Delete('ip-rules/:id')
   deleteIpRule(@Param('id', ParseIntPipe) id: number) {
     return this.svc.deleteIpRule(id);
+  }
+
+  @RequirePermission('security:view')
+  @Get('blocked-ips')
+  findBlockedIps(@Query() filter: IpAccessRuleFilterDto) {
+    return this.svc.findBlockedIps(filter);
+  }
+
+  @RequirePermission('security:manage')
+  @Post('blocked-ips')
+  blockIp(@Body() dto: CreateBlockedIpDto, @CurrentUser() user: { id: number }) {
+    return this.svc.blockIp(dto, user.id);
+  }
+
+  @RequirePermission('security:manage')
+  @Delete('blocked-ips/:id')
+  unblockIp(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: { id: number }) {
+    return this.svc.unblockIp(id, user.id);
   }
 }
