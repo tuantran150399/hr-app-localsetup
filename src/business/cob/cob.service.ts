@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { CobEntry, CobType, CobStatus } from '../../models/cob-entry.entity';
 import { CostEntry } from '../../models/cost-entry.entity';
 import { RevenueEntry, AccountingStatus, PaymentStatus } from '../../models/revenue-entry.entity';
@@ -46,30 +46,37 @@ export class CobService {
       throw new BadRequestException('The selected job does not belong to the selected customer');
     }
 
-    const entry = this.cobRepo.create({
-      type: CobType.CHARGE_ON_BEHALF,
-      partnerId: dto.partnerId,
-      vendorId: dto.vendorId,
-      jobId: dto.jobId,
-      currency: dto.currency || 'VND',
-      amount: dto.amount,
-      description: dto.description,
-      paymentMethod: dto.paymentMethod || null,
-      status: CobStatus.OPEN,
-      createdBy: userId,
-      updatedBy: userId,
+    const { saved, receivable, collectEntry } = await this.dataSource.transaction(async (em) => {
+      const cobRepo = em.getRepository(CobEntry);
+      const entry = cobRepo.create({
+        type: CobType.CHARGE_ON_BEHALF,
+        partnerId: dto.partnerId,
+        vendorId: dto.vendorId,
+        jobId: dto.jobId,
+        currency: dto.currency || 'VND',
+        amount: dto.amount,
+        description: dto.description,
+        paymentMethod: dto.paymentMethod || null,
+        status: CobStatus.OPEN,
+        createdBy: userId,
+        updatedBy: userId,
+      });
+
+      const saved = await cobRepo.save(entry);
+      const receivable = await this.createAutoReceivable(saved, userId, em);
+      saved.receivableEntryId = receivable.id;
+      await cobRepo.save(saved);
+
+      const collectEntry = await this.createPairedCollectEntry(saved, userId, em);
+      saved.relatedCobEntryId = collectEntry.id;
+      await cobRepo.save(saved);
+      return { saved, receivable, collectEntry };
     });
 
-    const saved = await this.cobRepo.save(entry);
-
-    // Auto-create a receivable from the customer
-    const receivable = await this.createAutoReceivable(saved, userId);
-    saved.receivableEntryId = receivable.id;
-    await this.cobRepo.save(saved);
-
-    const collectEntry = await this.createPairedCollectEntry(saved, userId);
-    saved.relatedCobEntryId = collectEntry.id;
-    await this.cobRepo.save(saved);
+    await this.auditSvc.log({
+      entityName: 'CobEntry', entityId: collectEntry.id, action: 'CREATE_COLLECT_FROM_COB', userId,
+      newValues: { cobEntryId: saved.id, partnerId: collectEntry.partnerId, amount: collectEntry.amount },
+    });
 
     await this.auditSvc.log({
       entityName: 'CobEntry', entityId: saved.id, action: 'CREATE_COB', userId,
@@ -95,30 +102,37 @@ export class CobService {
       throw new BadRequestException('This cost entry is already marked as COB');
     }
 
-    const entry = this.cobRepo.create({
-      type: CobType.CHARGE_ON_BEHALF,
-      partnerId: dto.partnerId,
-      vendorId: cost.vendorId,
-      jobId: cost.jobId,
-      costEntryId: cost.id,
-      currency: cost.currency,
-      amount: cost.amount,
-      description: `COB from cost: ${cost.description}`,
-      status: CobStatus.OPEN,
-      createdBy: userId,
-      updatedBy: userId,
+    const { saved, receivable, collectEntry } = await this.dataSource.transaction(async (em) => {
+      const cobRepo = em.getRepository(CobEntry);
+      const entry = cobRepo.create({
+        type: CobType.CHARGE_ON_BEHALF,
+        partnerId: dto.partnerId,
+        vendorId: cost.vendorId,
+        jobId: cost.jobId,
+        costEntryId: cost.id,
+        currency: cost.currency,
+        amount: cost.amount,
+        description: `COB from cost: ${cost.description}`,
+        status: CobStatus.OPEN,
+        createdBy: userId,
+        updatedBy: userId,
+      });
+
+      const saved = await cobRepo.save(entry);
+      const receivable = await this.createAutoReceivable(saved, userId, em);
+      saved.receivableEntryId = receivable.id;
+      await cobRepo.save(saved);
+
+      const collectEntry = await this.createPairedCollectEntry(saved, userId, em);
+      saved.relatedCobEntryId = collectEntry.id;
+      await cobRepo.save(saved);
+      return { saved, receivable, collectEntry };
     });
 
-    const saved = await this.cobRepo.save(entry);
-
-    // Auto-create a receivable from the customer
-    const receivable = await this.createAutoReceivable(saved, userId);
-    saved.receivableEntryId = receivable.id;
-    await this.cobRepo.save(saved);
-
-    const collectEntry = await this.createPairedCollectEntry(saved, userId);
-    saved.relatedCobEntryId = collectEntry.id;
-    await this.cobRepo.save(saved);
+    await this.auditSvc.log({
+      entityName: 'CobEntry', entityId: collectEntry.id, action: 'CREATE_COLLECT_FROM_COB', userId,
+      newValues: { cobEntryId: saved.id, partnerId: collectEntry.partnerId, amount: collectEntry.amount },
+    });
 
     await this.auditSvc.log({
       entityName: 'CobEntry', entityId: saved.id, action: 'MARK_COST_AS_COB', userId,
@@ -306,11 +320,12 @@ export class CobService {
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
-  private async createAutoReceivable(cobEntry: CobEntry, userId: number): Promise<RevenueEntry> {
+  private async createAutoReceivable(cobEntry: CobEntry, userId: number, em?: EntityManager): Promise<RevenueEntry> {
     if (!cobEntry.jobId) {
       throw new BadRequestException('Job is required to create a COB receivable');
     }
-    const receivable = this.revenueRepo.create({
+    const revenueRepo = em?.getRepository(RevenueEntry) || this.revenueRepo;
+    const receivable = revenueRepo.create({
       jobId: cobEntry.jobId,
       description: `Receivable from COB #${cobEntry.id}: ${cobEntry.description || ''}`,
       currency: cobEntry.currency,
@@ -324,11 +339,12 @@ export class CobService {
       createdBy: userId,
       updatedBy: userId,
     });
-    return this.revenueRepo.save(receivable);
+    return revenueRepo.save(receivable);
   }
 
-  private async createPairedCollectEntry(cobEntry: CobEntry, userId: number): Promise<CobEntry> {
-    const collectEntry = this.cobRepo.create({
+  private async createPairedCollectEntry(cobEntry: CobEntry, userId: number, em?: EntityManager): Promise<CobEntry> {
+    const cobRepo = em?.getRepository(CobEntry) || this.cobRepo;
+    const collectEntry = cobRepo.create({
       type: CobType.COLLECT_ON_BEHALF,
       partnerId: cobEntry.partnerId,
       vendorId: cobEntry.vendorId,
@@ -344,15 +360,7 @@ export class CobService {
       updatedBy: userId,
     });
 
-    const saved = await this.cobRepo.save(collectEntry);
-    await this.auditSvc.log({
-      entityName: 'CobEntry',
-      entityId: saved.id,
-      action: 'CREATE_COLLECT_FROM_COB',
-      userId,
-      newValues: { cobEntryId: cobEntry.id, partnerId: saved.partnerId, amount: saved.amount },
-    });
-    return saved;
+    return cobRepo.save(collectEntry);
   }
 
   private async findOneOrFail(id: number): Promise<CobEntry> {

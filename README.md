@@ -249,3 +249,55 @@ totalProfit = totalRevenue (sum of invoice subtotals) − totalCost (sum of expe
 ```
 
 Recalculate on demand: `POST /api/v1/jobs/:id/recalculate`
+
+---
+
+## Empty the database
+
+To delete all business data while preserving tables, columns, indexes, and
+relationships:
+
+```bash
+npm run db:clear -- <DB_NAME>
+```
+
+The TypeORM `migrations` table is preserved so the existing schema remains valid.
+Append `INCLUDE_MIGRATIONS` to clear that technical table as well.
+
+To drop every table and view instead, while keeping the database itself so
+migrations can recreate the schema:
+
+```bash
+npm run db:drop -- <DB_NAME>
+npm run migration:run
+```
+
+When `NODE_ENV=production`, append `ALLOW_PRODUCTION` after the database name.
+Set `DB_ENV_FILE` to explicitly select another environment file.
+
+### Emergency purge API
+
+The emergency API drops every view and table (including `migrations`) from the
+database used by the application's current connection. It is excluded from
+Swagger and requires one independent admin key plus HTTPS in production. No JWT
+or user account is accepted by this endpoint. Enable it only for the maintenance window:
+
+```env
+ENABLE_DATABASE_PURGE_API=true
+DATABASE_ADMIN_KEY=<at-least-32-random-characters>
+```
+
+Disable it and restart the application immediately after use. The database remains,
+but its schema is empty; run migrations to recreate it. Existing tokens stop working
+because the `users` table is removed.
+
+To run the operation later without signing in to the server, copy
+`.env.remote-maintenance.example` to `.env.remote-maintenance` on your computer,
+fill in its values, and run:
+
+```bash
+npm run db:drop:remote
+```
+
+The local file is ignored by Git. The command calls the endpoint using only the
+database admin key.

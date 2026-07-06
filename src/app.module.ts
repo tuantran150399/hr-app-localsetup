@@ -23,6 +23,7 @@ import { DebitNotesModule } from './business/debit-notes/debit-notes.module';
 import { CobModule } from './business/cob/cob.module';
 import { NotificationsModule } from './business/notifications/notifications.module';
 import { AdjustmentsModule } from './business/adjustments/adjustments.module';
+import { MaintenanceModule } from './business/maintenance/maintenance.module';
 import { getEnvFilePath } from './config/env-file-path';
 
 @Module({
@@ -54,6 +55,7 @@ import { getEnvFilePath } from './config/env-file-path';
     CobModule,
     NotificationsModule,
     AdjustmentsModule,
+    MaintenanceModule,
   ],
 })
 export class AppModule {}
